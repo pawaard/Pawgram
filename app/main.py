@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from io import StringIO
 from pathlib import Path
 import sqlite3
+from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -14,14 +15,42 @@ from app.config import APP_DIR, RESOURCE_DIR, get_settings
 from app.activity_service import activity_scheduler_loop, execute_activity_scan, stop_scheduler
 from app.database import add_log, add_notification, get_app_setting, get_connection, initialize_database, set_app_setting, utc_now
 from app.licensing import activate_license, license_refresh_loop, local_license_status, refresh_license
-from app.schemas import ActivityScanRequest, AdminPasswordRequest, CandidateSelectionRequest, GroupResolveRequest, JobCreateRequest, LicenseActivationRequest, LoginStartRequest, LoginVerifyRequest, ProxySettingsRequest, RotationSettingsRequest, TelegramSettingsRequest
+from app.schemas import ActivityScanRequest, ActivityTransferRequest, AdminPasswordRequest, CandidateSelectionRequest, GroupResolveRequest, JobCreateRequest, LicenseActivationRequest, LoginStartRequest, LoginVerifyRequest, ProxyBulkImportRequest, ProxySettingsRequest, RotationSettingsRequest, TelegramSettingsRequest
 from app.security import create_auth_token, decrypt, encrypt, hash_password, verify_auth_token, verify_password
 from app.telegram_service import execute_invite_job, list_groups, preview_job_candidates, resolve_group, start_login, test_session_proxy, verify_login
+
+
+APP_BUILD = "2026.07.28-proxy-update-v9"
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    with get_connection() as connection:
+        interrupted_jobs = connection.execute(
+            "SELECT id, session_id FROM transfer_jobs WHERE status IN ('running', 'queued_execution')"
+        ).fetchall()
+        if interrupted_jobs:
+            now = utc_now()
+            connection.execute(
+                """
+                UPDATE transfer_jobs
+                SET status='approved',
+                    last_error='Program yeniden başlatıldığı için yarım kalan işlem yeniden başlatılabilir.',
+                    updated_at=?
+                WHERE status IN ('running', 'queued_execution')
+                """,
+                (now,),
+            )
+    for interrupted_job in interrupted_jobs:
+        add_log(
+            "warning",
+            "invite",
+            "Program yeniden başlatılırken yarım kalan üye ekleme işi güvenli biçimde durduruldu.",
+            interrupted_job["session_id"],
+            interrupted_job["id"],
+        )
+    add_log("info", "system", f"Doğrudan üye ekleme yürütücüsü hazır: {APP_BUILD}")
     scheduler_task = asyncio.create_task(activity_scheduler_loop())
     license_task = asyncio.create_task(license_refresh_loop())
     try:
@@ -32,8 +61,7 @@ async def lifespan(_: FastAPI):
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
-JOB_TASKS: set[asyncio.Task] = set()
+app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 static_dir = RESOURCE_DIR / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
@@ -65,6 +93,7 @@ async def admin_auth_middleware(request: Request, call_next):
 
 def public_session(row: dict) -> dict:
     wait_seconds = 0
+    batch_wait_seconds = 0
     if row["flood_wait_until"]:
         try:
             wait_seconds = max(
@@ -73,8 +102,30 @@ def public_session(row: dict) -> dict:
             )
         except ValueError:
             wait_seconds = 0
-    status = "active" if row["status"] == "flood_wait" and wait_seconds == 0 else row["status"]
-    health_score = 100 if status == "active" else 55 if status == "flood_wait" else 25
+    if row.get("batch_cooldown_until"):
+        try:
+            batch_wait_seconds = max(
+                0,
+                int((datetime.fromisoformat(row["batch_cooldown_until"]) - datetime.now(UTC)).total_seconds()),
+            )
+        except ValueError:
+            batch_wait_seconds = 0
+    status = row["status"]
+    if status == "flood_wait" and wait_seconds == 0:
+        status = "active"
+    if status == "batch_wait" and batch_wait_seconds == 0:
+        status = "active"
+    proxy_status = row.get("proxy_last_status")
+    if not row.get("proxy_enabled") or status == "proxy_error" or proxy_status == "failed":
+        health_score, health_label = 0, "Proxy çalışmıyor"
+    elif status == "proxy_pending" or not proxy_status:
+        health_score, health_label = 50, "Proxy testi bekliyor"
+    elif status == "flood_wait":
+        health_score, health_label = 55, "24 saat dinleniyor"
+    elif status == "batch_wait":
+        health_score, health_label = 85, "Parti beklemesi"
+    else:
+        health_score, health_label = 100, "Kullanıma hazır"
     return {
         "id": row["id"],
         "label": row["label"],
@@ -84,8 +135,12 @@ def public_session(row: dict) -> dict:
         "username": row["username"],
         "status": status,
         "health_score": health_score,
+        "health_label": health_label,
         "flood_wait_seconds": wait_seconds,
         "flood_wait_until": row["flood_wait_until"],
+        "batch_cooldown_seconds": batch_wait_seconds,
+        "batch_cooldown_until": row.get("batch_cooldown_until"),
+        "batch_success_count": int(row.get("batch_success_count") or 0),
         "last_error": row["last_error"],
         "proxy_enabled": bool(row.get("proxy_enabled")),
         "proxy_type": row.get("proxy_type"),
@@ -115,6 +170,7 @@ async def health():
         "telegram_configured": settings.telegram_configured or panel_configured,
         "telegram_config_source": "environment" if settings.telegram_configured else "panel" if panel_configured else None,
         "environment": settings.app_env,
+        "build": APP_BUILD,
         "license": {key: value for key, value in local_license_status().items() if key != "lease_token"},
     }
 
@@ -242,7 +298,7 @@ async def dashboard():
     return {
         "sessions_total": sum(session_counts.values()),
         "sessions_active": session_counts.get("active", 0),
-        "sessions_waiting": session_counts.get("flood_wait", 0),
+        "sessions_waiting": session_counts.get("flood_wait", 0) + session_counts.get("batch_wait", 0),
         "jobs_total": sum(job_counts.values()),
         "jobs_active": job_counts.get("running", 0),
         "processed": totals["processed"],
@@ -296,6 +352,7 @@ async def create_activity_scan(payload: ActivityScanRequest):
         scan_id = cursor.lastrowid
     add_log("success", "activity", f"Aktivite taraması oluşturuldu: {payload.name}")
     add_notification("info", "Aktivite taraması sırada", f"{payload.name} otomatik kuyruğa eklendi.", "activity")
+    asyncio.create_task(execute_activity_scan(scan_id))
     return {"ok": True, "scan_id": scan_id, "status": "queued"}
 
 
@@ -354,6 +411,88 @@ async def activity_scan_results(scan_id: int):
             (scan_id,),
         ).fetchall()
     return {"scan": scan, "items": rows}
+
+
+@app.post("/api/activity-scans/{scan_id}/prepare-transfer")
+async def prepare_activity_transfer(scan_id: int, payload: ActivityTransferRequest):
+    scan = get_activity_scan_or_404(scan_id)
+    if scan["status"] not in {"completed", "scheduled"} or not scan["last_run_at"]:
+        raise HTTPException(status_code=409, detail="Aktarım hazırlanmadan önce aktivite taraması tamamlanmalı.")
+    if not scan["session_id"] or not scan["group_id"]:
+        raise HTTPException(status_code=409, detail="Taramanın Telegram session veya grup bilgisi eksik.")
+    if payload.min_delay_seconds > payload.max_delay_seconds:
+        raise HTTPException(status_code=400, detail="Minimum bekleme maksimum beklemeden büyük olamaz.")
+
+    try:
+        target = await resolve_group(scan["session_id"], payload.target_ref)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if target["id"] == scan["group_id"]:
+        raise HTTPException(status_code=400, detail="Kaynak ve hedef grup aynı olamaz.")
+
+    now = utc_now()
+    job_name = f"{scan['name']} → {target['title']}"[:100]
+    with get_connection() as connection:
+        job_id = connection.execute(
+            """
+            INSERT INTO transfer_jobs(
+                name, session_id, source_ref, source_id, source_title,
+                target_ref, target_id, target_title, mode, status,
+                max_users, min_delay_seconds, max_delay_seconds, daily_limit,
+                working_start, working_end, requires_approval, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'invite', 'ready', ?, ?, ?, ?,
+                      '00:00', '23:59', 1, ?, ?)
+            """,
+            (
+                job_name,
+                scan["session_id"],
+                scan["group_ref"],
+                scan["group_id"],
+                scan["group_title"] or scan["group_ref"],
+                payload.target_ref,
+                target["id"],
+                target["title"],
+                payload.max_users,
+                payload.min_delay_seconds,
+                payload.max_delay_seconds,
+                payload.daily_limit,
+                now,
+                now,
+            ),
+        ).lastrowid
+        job = connection.execute(
+            "SELECT * FROM transfer_jobs WHERE id=?", (job_id,)
+        ).fetchone()
+
+    try:
+        summary = await preview_job_candidates(job)
+    except Exception as error:
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE transfer_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?",
+                (str(error), utc_now(), job_id),
+            )
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    with get_connection() as connection:
+        connection.execute(
+            "UPDATE job_candidates SET selected=1 WHERE job_id=? AND status='eligible'",
+            (job_id,),
+        )
+        selected_count = connection.execute(
+            "SELECT COUNT(*) count FROM job_candidates WHERE job_id=? AND selected=1",
+            (job_id,),
+        ).fetchone()["count"]
+
+    add_log("success", "queue", f"Aktivite taramasından aktarım hazırlandı: {job_name}", scan["session_id"], job_id)
+    add_notification("success", "Aktarım adayları hazır", f"{selected_count} uygun kullanıcı seçildi.", "jobs")
+    return {
+        "ok": True,
+        "job_id": job_id,
+        "selected_count": selected_count,
+        "summary": summary,
+        "target": target,
+    }
 
 
 @app.get("/api/activity-scans/{scan_id}/report.csv")
@@ -417,6 +556,53 @@ def get_session_or_404(session_id: int) -> dict:
     return session
 
 
+def parse_proxy_line(raw_line: str, default_proxy_type: str) -> dict:
+    line = raw_line.strip()
+    if not line or line.startswith("#"):
+        raise ValueError("Boş veya yorum satırı")
+    proxy_type = default_proxy_type
+    host: str | None = None
+    port_text: str | None = None
+    username: str | None = None
+    password: str | None = None
+    if "://" in line:
+        parsed = urlsplit(line)
+        if parsed.scheme not in {"socks5", "http"}:
+            raise ValueError("Desteklenen türler socks5 ve http")
+        proxy_type = parsed.scheme
+        host = parsed.hostname
+        port_text = str(parsed.port) if parsed.port else None
+        username = unquote(parsed.username) if parsed.username else None
+        password = unquote(parsed.password) if parsed.password else None
+    elif "@" in line:
+        auth, endpoint = line.rsplit("@", 1)
+        if ":" not in auth or ":" not in endpoint:
+            raise ValueError("Beklenen biçim user:pass@host:port")
+        username, password = auth.split(":", 1)
+        host, port_text = endpoint.rsplit(":", 1)
+    else:
+        parts = line.split(":", 3)
+        if len(parts) == 2:
+            host, port_text = parts
+        elif len(parts) == 4:
+            host, port_text, username, password = parts
+        else:
+            raise ValueError("Beklenen biçim host:port:user:pass veya host:port")
+    host = host.strip() if host else None
+    if not host or not port_text or not port_text.isdigit():
+        raise ValueError("Host veya port geçersiz")
+    port = int(port_text)
+    if port < 1 or port > 65535:
+        raise ValueError("Port 1-65535 arasında olmalı")
+    return {
+        "proxy_type": proxy_type,
+        "host": host,
+        "port": port,
+        "username": username.strip() if username else None,
+        "password": password if password else None,
+    }
+
+
 @app.get("/api/sessions/{session_id}/proxy")
 async def session_proxy(session_id: int):
     session = get_session_or_404(session_id)
@@ -457,6 +643,15 @@ async def save_session_proxy(session_id: int, payload: ProxySettingsRequest):
             SET proxy_enabled=?, proxy_type=?, proxy_host=?, proxy_port=?,
                 proxy_username_encrypted=?, proxy_password_encrypted=?,
                 proxy_last_status=NULL, proxy_latency_ms=NULL, proxy_last_error=NULL,
+                status=CASE
+                    WHEN status IN ('flood_wait', 'batch_wait') THEN status
+                    WHEN ?=1 THEN 'proxy_pending'
+                    ELSE 'proxy_error'
+                END,
+                last_error=CASE
+                    WHEN ?=1 THEN NULL
+                    ELSE 'Proxy devre dışı. Bu session ana IP üzerinden çalıştırılmaz; proxyyi etkinleştirip test edin.'
+                END,
                 updated_at=?
             WHERE id=?
             """,
@@ -467,6 +662,8 @@ async def save_session_proxy(session_id: int, payload: ProxySettingsRequest):
                 payload.port,
                 username_encrypted,
                 password_encrypted,
+                int(payload.enabled),
+                int(payload.enabled),
                 utc_now(),
                 session_id,
             ),
@@ -483,6 +680,116 @@ async def proxy_test(session_id: int):
         return await test_session_proxy(session_id)
     except Exception as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.delete("/api/sessions/{session_id}/proxy")
+async def delete_session_proxy(session_id: int):
+    get_session_or_404(session_id)
+    guidance = (
+        "Proxy silindi. Bu session ana IP üzerinden çalıştırılmaz; "
+        "hesabı yeniden kullanmak için yeni bir proxy kaydedip bağlantıyı test edin."
+    )
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE telegram_sessions
+            SET proxy_enabled=0, proxy_type=NULL, proxy_host=NULL, proxy_port=NULL,
+                proxy_username_encrypted=NULL, proxy_password_encrypted=NULL,
+                proxy_last_status=NULL, proxy_latency_ms=NULL, proxy_last_error=NULL,
+                proxy_last_test_at=NULL, status='proxy_error', last_error=?, updated_at=?
+            WHERE id=?
+            """,
+            (guidance, utc_now(), session_id),
+        )
+    add_log("warning", "proxy", "Session proxy bilgileri tamamen silindi", session_id)
+    add_notification(
+        "warning",
+        "Proxy silindi",
+        "Hesap güvenlik gereği durduruldu. Yeni proxy kaydedip bağlantıyı test edin.",
+        "settings",
+    )
+    return {"ok": True, "session_id": session_id, "fail_closed": True, "message": guidance}
+
+
+@app.post("/api/proxies/bulk-assign")
+async def bulk_assign_proxies(payload: ProxyBulkImportRequest):
+    parsed_proxies: list[dict] = []
+    invalid_lines: list[dict] = []
+    for line_number, raw_line in enumerate(payload.content.splitlines(), start=1):
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        try:
+            parsed_proxies.append(
+                parse_proxy_line(raw_line, payload.default_proxy_type)
+            )
+        except ValueError as error:
+            invalid_lines.append({"line": line_number, "error": str(error)})
+    if not parsed_proxies:
+        raise HTTPException(
+            status_code=400,
+            detail="TXT içinde geçerli proxy bulunamadı. host:port:user:pass biçimini kontrol edin.",
+        )
+    now = utc_now()
+    assignments: list[dict] = []
+    with get_connection() as connection:
+        empty_sessions = connection.execute(
+            """
+            SELECT id, label, phone_masked FROM telegram_sessions
+            WHERE session_encrypted IS NOT NULL
+              AND (TRIM(COALESCE(proxy_host, ''))='' OR proxy_port IS NULL)
+            ORDER BY id
+            """
+        ).fetchall()
+        for session, proxy in zip(empty_sessions, parsed_proxies):
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET proxy_enabled=1, proxy_type=?, proxy_host=?, proxy_port=?,
+                    proxy_username_encrypted=?, proxy_password_encrypted=?,
+                    proxy_last_status=NULL, proxy_latency_ms=NULL, proxy_last_error=NULL,
+                    proxy_last_test_at=NULL,
+                    status=CASE WHEN status IN ('flood_wait', 'batch_wait') THEN status ELSE 'proxy_pending' END,
+                    last_error=NULL, updated_at=?
+                WHERE id=?
+                """,
+                (
+                    proxy["proxy_type"],
+                    proxy["host"],
+                    proxy["port"],
+                    encrypt(proxy["username"]) if proxy["username"] else None,
+                    encrypt(proxy["password"]) if proxy["password"] else None,
+                    now,
+                    session["id"],
+                ),
+            )
+            assignments.append(
+                {
+                    "session_id": session["id"],
+                    "label": session["label"],
+                    "phone_masked": session["phone_masked"],
+                    "proxy": f"{proxy['host']}:{proxy['port']}",
+                    "proxy_type": proxy["proxy_type"],
+                }
+            )
+    add_log(
+        "success",
+        "proxy",
+        f"Toplu proxy dağıtımı: {len(assignments)} session'a sabit proxy atandı",
+    )
+    add_notification(
+        "success",
+        "Toplu proxy dağıtımı tamamlandı",
+        f"{len(assignments)} hesaba proxy atandı. Her hesap işe başlamadan önce otomatik test edilecek.",
+        "settings",
+    )
+    return {
+        "ok": True,
+        "assigned_count": len(assignments),
+        "assignments": assignments,
+        "invalid_lines": invalid_lines,
+        "unused_proxy_count": max(0, len(parsed_proxies) - len(assignments)),
+        "unassigned_session_count": max(0, len(empty_sessions) - len(assignments)),
+    }
 
 
 @app.get("/api/sessions/{session_id}/groups")
@@ -649,19 +956,74 @@ async def approve_job(job_id: int):
 @app.post("/api/jobs/{job_id}/execute")
 async def execute_job(job_id: int):
     job = get_job_or_404(job_id)
-    if job["status"] not in {"approved", "paused_quota"}:
-        raise HTTPException(status_code=409, detail="Yalnızca onaylı veya kota nedeniyle duraklatılmış işler başlatılabilir.")
+    resumable_statuses = {
+        "approved",
+        "paused_quota",
+        "paused_batch",
+        "proxy_error",
+        "flood_wait",
+    }
+    if job["status"] not in resumable_statuses:
+        raise HTTPException(
+            status_code=409,
+            detail="Yalnızca onaylı veya güvenlik nedeniyle duraklatılmış işler başlatılabilir.",
+        )
     with get_connection() as connection:
         selected_count = connection.execute(
             "SELECT COUNT(*) count FROM job_candidates WHERE job_id=? AND selected=1 AND status='eligible'",
             (job_id,),
         ).fetchone()["count"]
+        missing_message_context = connection.execute(
+            """
+            SELECT COUNT(*) count FROM job_candidates
+            WHERE job_id=? AND selected=1 AND status='eligible' AND source_message_id IS NULL
+            """,
+            (job_id,),
+        ).fetchone()["count"]
     if selected_count < 1:
         raise HTTPException(status_code=400, detail="İşlenecek seçili aday kalmadı.")
-    task = asyncio.create_task(execute_invite_job(job_id))
-    JOB_TASKS.add(task)
-    task.add_done_callback(JOB_TASKS.discard)
-    return {"ok": True, "status": "starting", "selected_count": selected_count}
+    if missing_message_context:
+        raise HTTPException(
+            status_code=409,
+            detail="Seçili adayların Telegram kaynak mesaj referansı eksik. Önizlemeyi yeniden çalıştırın.",
+        )
+    now = utc_now()
+    with get_connection() as connection:
+        claimed = connection.execute(
+            """
+            UPDATE transfer_jobs
+            SET status='queued_execution', execution_started_at=COALESCE(execution_started_at, ?),
+                last_error=NULL, updated_at=?
+            WHERE id=? AND status IN ('approved', 'paused_quota', 'paused_batch', 'proxy_error', 'flood_wait')
+            """,
+            (now, now, job_id),
+        )
+    if claimed.rowcount != 1:
+        raise HTTPException(status_code=409, detail="İş zaten başlatılmış veya durumu değişmiş.")
+    add_log(
+        "info",
+        "invite",
+        "Düğme üzerinden doğrudan Telegram üye ekleme işlemi başlatıldı",
+        job["session_id"],
+        job_id,
+    )
+    await execute_invite_job(job_id)
+    completed_job = get_job_or_404(job_id)
+    if completed_job["status"] == "failed":
+        raise HTTPException(
+            status_code=400,
+            detail=completed_job["last_error"] or "Telegram üye ekleme işlemi başarısız oldu.",
+        )
+    return {
+        "ok": True,
+        "status": completed_job["status"],
+        "selected_count": selected_count,
+        "processed": completed_job["processed"],
+        "succeeded": completed_job["succeeded"],
+        "skipped": completed_job["skipped"],
+        "failed": completed_job["failed"],
+        "last_error": completed_job["last_error"],
+    }
 
 
 @app.get("/api/jobs/{job_id}/report.csv")

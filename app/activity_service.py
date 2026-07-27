@@ -44,6 +44,8 @@ async def execute_activity_scan(scan_id: int) -> None:
                 author["telegram_user_id"],
                 author["display_name"],
                 author["username"],
+                author["access_hash"],
+                author.get("source_message_id"),
                 author["message_count"],
                 author["last_message_at"].isoformat(),
                 now.isoformat(),
@@ -56,8 +58,8 @@ async def execute_activity_scan(scan_id: int) -> None:
                 """
                 INSERT INTO activity_results(
                     scan_id, telegram_user_id, display_name, username,
-                    message_count, last_message_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    access_hash, source_message_id, message_count, last_message_at, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

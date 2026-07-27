@@ -187,10 +187,10 @@
           <p class="help-text">Kişisel sürümde lisans zorunlu değildir. Ticari paket etkinleştirildiğinde lisans cihazla eşleştirilir ve belirli aralıklarla güvenli sunucuda doğrulanır.</p>
         </div>
         <div class="panel proxy-panel">
-          <div class="section-heading"><div><h2>Session proxy yönetimi</h2><p>İsteğe bağlı sabit SOCKS5 veya HTTP proxy. Bir session'a atanan proxy işlem sırasında otomatik değiştirilmez.</p></div><span class="badge active">Fail-closed</span></div>
+          <div class="section-heading"><div><h2>Session proxy yönetimi</h2><p>Her Telegram hesabı sabit SOCKS5 veya HTTP proxy ile çalışır. Atanan proxy işlem sırasında otomatik değiştirilmez.</p></div><span class="badge active">Fail-closed</span></div>
           <div class="proxy-form">
             <label>Telegram session<select id="proxy-session"></select></label>
-            <label class="check-label"><input id="proxy-enabled" type="checkbox"> Bu session için proxy kullan</label>
+            <label class="check-label"><input id="proxy-enabled" type="checkbox"> Bu session için proxyyi etkinleştir</label>
             <label>Proxy türü<select id="proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></label>
             <label>Sunucu / IP<input id="proxy-host" placeholder="proxy.example.com"></label>
             <label>Port<input id="proxy-port" type="number" min="1" max="65535" placeholder="1080"></label>
@@ -200,9 +200,17 @@
           <div class="proxy-actions">
             <button class="primary" id="save-proxy-settings">Proxy ayarını kaydet</button>
             <button class="secondary" id="test-proxy">Bağlantıyı test et</button>
+            <button class="danger-button" id="delete-proxy">Proxyyi sil</button>
             <div id="proxy-status" class="proxy-status">Bir session seçerek proxy yapılandırabilirsiniz.</div>
           </div>
-          <div class="compliance-note"><strong>IP sızıntısı koruması:</strong> Proxy etkinse ve bağlantı kurulamazsa işlem durur; Pawgram doğrudan internet bağlantısına geri dönmez. Proxy, kota veya FloodWait davranışını değiştirmez.</div>
+          <div class="proxy-bulk">
+            <div><strong>Toplu Proxy Ekle</strong><small>TXT içindeki proxyler yalnızca proxy bilgisi boş hesaplara, hesap ID sırasıyla birer kez atanır.</small></div>
+            <label>Varsayılan tür<select id="bulk-proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></label>
+            <label class="file-picker">TXT dosyası<input id="bulk-proxy-file" type="file" accept=".txt,text/plain"></label>
+            <button class="primary" id="bulk-assign-proxies">Toplu Proxy Ekle</button>
+          </div>
+          <div id="bulk-proxy-status" class="proxy-status bulk-status">Biçimler: host:port, host:port:user:pass, user:pass@host:port veya socks5://user:pass@host:port</div>
+          <div class="compliance-note"><strong>IP sızıntısı koruması:</strong> Proxy yoksa veya test yanıt vermezse hesap çalıştırılmaz; Pawgram doğrudan internet bağlantısına geri dönmez. Host/port, kullanıcı-parola, IP yetkilendirmesi ve proxy paket süresini kontrol edin.</div>
         </div>
         <div class="panel backup-panel">
           <div class="section-heading"><div><h2>Yedekleme ve veri güvenliği</h2><p>Veritabanının geri yüklenebilir bir kopyasını oluşturun.</p></div><button class="primary" id="create-backup">＋ Yeni yedek oluştur</button></div>
@@ -238,20 +246,20 @@
       <div class="form-grid">
         <label class="span-2">İş adı<input id="job-name" placeholder="Topluluk aktarım önizlemesi"></label>
         <label>Telegram hesabı<select id="job-session"></select></label>
-        <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" max="1000" value="25"></label>
+        <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" max="1000" value="100"></label>
         <label>Çekilecek grup<input id="job-source" placeholder="-100... veya @kaynak"></label>
         <label>Gönderilecek grup<input id="job-target" placeholder="-100... veya @hedef"></label>
-        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="10" value="45"></label>
-        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="10" value="90"></label>
+        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="0"></label>
+        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="0" value="0"></label>
         <label>Günlük koruma sınırı<input id="job-daily" type="number" min="1" value="50"></label>
         <label class="check-label"><input id="job-dry-run" type="checkbox" checked> Test/önizleme modu</label>
         <label>Planlanan başlangıç<input id="job-scheduled" type="datetime-local"></label>
         <label>Çalışma başlangıcı<input id="job-working-start" type="time" value="09:00"></label>
         <label>Çalışma bitişi<input id="job-working-end" type="time" value="22:00"></label>
       </div>
-      <div class="notice">İlk sürüm işleri güvenli biçimde tanımlar ve doğrular. Gerçek davet çalıştırıcısı, önizleme ve açık yönetici onayından sonra etkinleştirilecektir.</div>
+      <div class="notice">Seçilen adaylar Telegram'ın resmi “Gruba katılımcı ekle” işlemiyle doğrudan hedef gruba eklenir; özel mesaj veya davet bağlantısı gönderilmez.</div>
       <button class="primary full" id="create-job">Doğrula ve kuyruğa ekle</button>
-      <div class="notice invite-note">Davetler yalnızca panelde seçilip onaylanan adaylar için, işin seçili session'ı ve günlük güvenli kota ile çalışır. Kota veya kritik Telegram hatasında başka session'a geçilmez.</div>
+      <div class="notice invite-note">Üye ekleme yalnızca panelde seçilip onaylanan adaylar için çalışır. Aynı session en fazla 3 başarılı eklemeden sonra 30 dakika bekler; proxy veya Telegram kısıtı varsa başka hesaba otomatik geçilmez.</div>
       <div id="job-message" class="form-message hidden"></div>
     </div>
   </div>
@@ -267,7 +275,7 @@
         <p>Onay, yalnızca önizleme sonuçlarını kabul ettiğinizi kaydeder. Telegram limitleri ve FloodWait kuralları değişmez.</p>
         <button class="primary" id="approve-job">Önizlemeyi onayla</button>
       </div>
-      <div class="candidate-tools"><button class="primary hidden" id="execute-job">Davetleri başlat</button></div>
+      <div class="candidate-tools"><button class="primary hidden" id="execute-job">Üyeleri hedef gruba ekle</button></div>
       <div id="candidate-message" class="form-message hidden"></div>
     </div>
   </div>
@@ -278,6 +286,32 @@
       <div class="section-heading modal-heading"><div><h2>Aktif kullanıcı sonuçları</h2><p id="activity-results-name">Mesaj yazarı analizi</p></div><a class="secondary button-link" id="activity-results-csv" href="#">CSV indir</a></div>
       <div id="activity-results-summary" class="candidate-summary"></div>
       <div id="activity-results-table" class="table-wrap candidate-table"></div>
+      <div class="approval-bar">
+        <p>Analiz edilen uygun üyelerden hedef gruba aktarım önizlemesi hazırlayın.</p>
+        <button class="primary" id="open-activity-transfer">Bu üyeleri gruba aktar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="activity-transfer-modal">
+    <div class="modal wide">
+      <button class="modal-close" data-close-modal>×</button>
+      <h2>Üyeler hangi gruba aktarılsın?</h2>
+      <p id="activity-transfer-source">Aktif kullanıcı taraması</p>
+      <div class="form-grid">
+        <label class="span-2">Hedef grup @kullanıcı adı veya ID
+          <input id="activity-transfer-target" placeholder="@hedefgrup veya -100..."></label>
+        <label>Hazırlanacak kullanıcı sayısı
+          <input id="activity-transfer-max" type="number" min="1" max="1000" value="100"></label>
+        <label>Günlük üye ekleme sınırı
+          <input id="activity-transfer-daily" type="number" min="1" max="1000" value="50"></label>
+        <label>Minimum bekleme (sn)
+          <input id="activity-transfer-min-delay" type="number" min="0" value="0"></label>
+        <label>Maksimum bekleme (sn)
+          <input id="activity-transfer-max-delay" type="number" min="0" value="0"></label>
+      </div>
+      <button class="primary full" id="prepare-activity-transfer">Grubu bul ve adayları hazırla</button>
+      <div id="activity-transfer-message" class="form-message hidden"></div>
     </div>
   </div>
 
@@ -326,6 +360,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260728-proxy-v9"></script>
 </body>
 </html>

@@ -1,4 +1,5 @@
 button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
+.is-loading{display:inline-flex!important;align-items:center;justify-content:center;gap:7px}.is-loading:before{content:"";width:11px;height:11px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:pawgram-spin .7s linear infinite}@keyframes pawgram-spin{to{transform:rotate(360deg)}}
 #job-modal .form-grid + .notice{display:none}
 .modal-backdrop{backdrop-filter:none!important;background:rgba(1,6,12,.9)!important}
 .icon-button{position:relative;width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:#0d1724;color:#b9c6d8;cursor:pointer}
@@ -23,5 +24,14 @@ button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
 .proxy-status { color: var(--muted); font-size: 13px; margin-left: auto; }
 .proxy-status.success { color: var(--green); }
 .proxy-status.error { color: var(--red); }
+.danger-button { padding: 10px 14px; border: 1px solid #7b3434; border-radius: 6px; background: #291313; color: #ff9b9b; cursor: pointer; }
+.danger-button:hover { background: #3a1717; border-color: #b84a4a; }
+.danger-button:disabled { cursor: not-allowed; opacity: .55; }
+.proxy-bulk { display: grid; grid-template-columns: minmax(240px, 1.5fr) 170px minmax(210px, 1fr) auto; gap: 12px; align-items: end; margin-top: 20px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: #0b1521; }
+.proxy-bulk > div strong, .proxy-bulk > div small { display: block; }
+.proxy-bulk > div small { margin-top: 5px; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.file-picker input { padding: 7px; }
+.bulk-status { width: 100%; margin: 9px 0 16px; line-height: 1.5; }
 @media (max-width: 1050px) { .proxy-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 620px) { .proxy-form { grid-template-columns: 1fr; } .proxy-status { width: 100%; margin-left: 0; } }
+@media (max-width: 1050px) { .proxy-bulk { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .proxy-form, .proxy-bulk { grid-template-columns: 1fr; } .proxy-status { width: 100%; margin-left: 0; } }

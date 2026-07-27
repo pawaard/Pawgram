@@ -1,13 +1,24 @@
 import ctypes
 import multiprocessing
+import os
 import socket
+import sys
 import threading
 import webbrowser
+
+# PyInstaller'ın penceresiz Windows derlemesinde standart çıktı akışları None
+# olabilir. Uvicorn ve bazı bağımlılıklar bu akışları kontrol ettiği için EXE
+# daha port açmadan kapanmasın.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 import uvicorn
 
 from app.config import get_settings
 from app.main import app
+from app.updater import check_and_stage_update, clean_abandoned_update_directories
 
 
 def available_port(preferred: int) -> int:
@@ -28,6 +39,9 @@ def open_panel(port: int) -> None:
 if __name__ == "__main__":
     multiprocessing.freeze_support()
     try:
+        clean_abandoned_update_directories()
+        if check_and_stage_update():
+            raise SystemExit(0)
         settings = get_settings()
         port = available_port(settings.app_port)
         threading.Timer(1.4, open_panel, args=(port,)).start()

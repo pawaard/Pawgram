@@ -10,9 +10,9 @@ Kişisel kaynak sürümü mevcut sahibin kullanımını kilitlememek için lisan
 
 ## Otomatik güncelleme
 
-Pawgram başlatıcısı, uygulama açılırken özel `pawaard/Pawgram` deposunun `main` dalını kontrol eder. Yeni commit varsa yalnızca güvenli bir `fast-forward` güncellemesi uygular. Yerel kaynak kodunda değişiklik bulunursa kullanıcı dosyalarını korumak için güncellemeyi atlar. Güncelleme sorunu uygulamanın açılmasını engellemez ve ayrıntılar `data/update.log` dosyasına yazılır.
+Python gerektirmeyen Windows sürümü açılışta resmi GitHub Releases alanındaki `pawgram-update.json` manifestini kontrol eder. Yalnızca SHA-256 özeti eşleşen ve Pawgram Ed25519 anahtarıyla imzalanmış paketler kurulur. Güncelleme sırasında `data` klasörü, veritabanı, Telegram session bilgileri, API ayarları ve proxy parolaları korunur. Kurulum başarısız olursa eski sürüm geri yüklenir ve ayrıntılar `data/update.log` dosyasına yazılır.
 
-Özel depoya erişim GitHub CLI/Git Credential Manager oturumuyla sağlanır. Geçici olarak güncelleme kontrolünü kapatmak için `PAWGRAM_SKIP_UPDATE=1` ortam değişkeni kullanılabilir. Veritabanı, Telegram session dosyaları, API bilgileri, proxy parolaları ve diğer çalışma verileri Git deposuna dahil edilmez.
+Güncelleme kontrolünü geçici olarak kapatmak için `PAWGRAM_SKIP_UPDATE=1` ortam değişkeni kullanılabilir. Kaynak kod sürümü otomatik EXE güncellemesi çalıştırmaz.
 
 Bu ilk sürüm şunları içerir:
 
@@ -37,12 +37,18 @@ Bu ilk sürüm şunları içerir:
 - Bildirim merkezi
 - Tek tıkla SQLite yedeği ve indirme
 - Ayrıntılı CSV aday raporu
-
-> Gerçek kullanıcı davet çalıştırıcısı bu sürümde bilinçli olarak etkin değildir. İşler doğrulanır, adaylar önizlenir ve yönetici onayı kaydedilir. Son çalıştırma katmanı Telegram limitlerine uygun biçimde ayrıca etkinleştirilecektir.
+- Her Telegram hesabına özel, şifreli ve sabit SOCKS5/HTTP proxy
+- TXT dosyasından boş hesaplara sırayla toplu proxy dağıtımı
+- Proxy yoksa veya yanıt vermiyorsa ana IP'ye dönmeden işlemi durdurma
+- Seçili uygun adayları Telegram'ın resmi gruba üye ekleme isteğiyle hedef gruba ekleme
+- Üç başarılı eklemeden sonra 30 dakikalık parti beklemesi
+- PeerFlood alan hesabı 24 saat dinlendirme ve kalan adayları koruma
 
 ## Güncel davet akışı
 
 Panelde önizlenen adaylardan yalnızca açıkça seçilip onaylanan kişiler, iş oluşturulurken seçilen sabit session üzerinden hedef gruba davet edilir. Günlük kota varsayılan olarak 30'dur. Kota dolduğunda kalan adaylar bekler; FloodWait, PeerFlood veya kullanıcı gizlilik kısıtı gibi kritik Telegram cevaplarında iş durur ve başka session'a aktarılmaz. Başarılı davetler üye geçmişine kaydedilir.
+
+Her session için sabit proxy zorunludur. Proxy, Telegram işleminden önce test edilir. Bağlantı kurulamazsa session `proxy_error` durumuna alınır ve uygulama sunucunun ana IP adresi üzerinden bağlantı denemez. Ayarlar ekranındaki **Toplu Proxy Ekle** alanı `host:port`, `host:port:user:pass`, `user:pass@host:port` ve URL biçimlerini kabul eder.
 
 ## Kurulum
 
@@ -85,6 +91,9 @@ Ardından [http://127.0.0.1:8000](http://127.0.0.1:8000) adresini açın.
 
 - Telegram'ın bildirdiği FloodWait süresi değiştirilmeden uygulanır.
 - Bir iş, beklemeyi aşmak için otomatik olarak başka hesaba taşınmaz.
+- PeerFlood alan hesap 24 saat çalıştırılmaz.
+- Üç başarılı üye eklemeden sonra aynı session 30 dakika bekletilir.
+- Proxy yoksa veya çalışmıyorsa Telegram istemcisi başlatılmaz ve doğrudan IP bağlantısı yapılmaz.
 - API anahtarı, doğrulama kodu, 2FA parolası ve açık session verisi loglanmaz.
 - `.env` ve yerel veritabanı Git'e dahil edilmez.
 - Üretimde güçlü ve değişmeyen bir `APP_SECRET_KEY` kullanılmalıdır. Bu anahtar değiştirilirse mevcut şifrelenmiş session kayıtları okunamaz.

@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS job_candidates (
     telegram_user_id INTEGER NOT NULL,
     display_name TEXT NOT NULL,
     username TEXT,
+    access_hash INTEGER,
+    source_message_id INTEGER,
     status TEXT NOT NULL,
     reason TEXT,
     created_at TEXT NOT NULL,
@@ -127,6 +129,8 @@ CREATE TABLE IF NOT EXISTS activity_results (
     telegram_user_id INTEGER NOT NULL,
     display_name TEXT NOT NULL,
     username TEXT,
+    access_hash INTEGER,
+    source_message_id INTEGER,
     message_count INTEGER NOT NULL,
     last_message_at TEXT NOT NULL,
     created_at TEXT NOT NULL,
@@ -138,6 +142,15 @@ CREATE TABLE IF NOT EXISTS session_usage_daily (
     session_id INTEGER NOT NULL,
     usage_date TEXT NOT NULL,
     operation_count INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT,
+    PRIMARY KEY(session_id, usage_date),
+    FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS session_invite_usage_daily (
+    session_id INTEGER NOT NULL,
+    usage_date TEXT NOT NULL,
+    invite_count INTEGER NOT NULL DEFAULT 0,
     last_used_at TEXT,
     PRIMARY KEY(session_id, usage_date),
     FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
@@ -175,6 +188,8 @@ JOB_COLUMNS = {
 CANDIDATE_COLUMNS = {
     "selected": "INTEGER NOT NULL DEFAULT 0",
     "processed_at": "TEXT",
+    "access_hash": "INTEGER",
+    "source_message_id": "INTEGER",
 }
 
 
@@ -182,6 +197,12 @@ ACTIVITY_SCAN_COLUMNS = {
     "access_status": "TEXT NOT NULL DEFAULT 'unknown'",
     "join_requested_at": "TEXT",
     "joined_at": "TEXT",
+}
+
+
+ACTIVITY_RESULT_COLUMNS = {
+    "access_hash": "INTEGER",
+    "source_message_id": "INTEGER",
 }
 
 
@@ -196,6 +217,8 @@ SESSION_COLUMNS = {
     "proxy_latency_ms": "INTEGER",
     "proxy_last_error": "TEXT",
     "proxy_last_test_at": "TEXT",
+    "batch_success_count": "INTEGER NOT NULL DEFAULT 0",
+    "batch_cooldown_until": "TEXT",
 }
 
 
@@ -230,6 +253,12 @@ def initialize_database() -> None:
         for column, definition in ACTIVITY_SCAN_COLUMNS.items():
             if column not in existing_activity_columns:
                 connection.execute(f"ALTER TABLE activity_scans ADD COLUMN {column} {definition}")
+        existing_activity_result_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(activity_results)").fetchall()
+        }
+        for column, definition in ACTIVITY_RESULT_COLUMNS.items():
+            if column not in existing_activity_result_columns:
+                connection.execute(f"ALTER TABLE activity_results ADD COLUMN {column} {definition}")
         existing_session_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(telegram_sessions)").fetchall()
         }

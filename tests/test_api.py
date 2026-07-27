@@ -97,6 +97,11 @@ class ApiTests(unittest.TestCase):
             "password": "proxy-secret",
         })
         self.assertEqual(response.status_code, 200, response.text)
+        with get_connection() as connection:
+            pending = connection.execute(
+                "SELECT status FROM telegram_sessions WHERE id=?", (session_id,)
+            ).fetchone()
+        self.assertEqual(pending["status"], "proxy_pending")
         config = self.client.get(f"/api/sessions/{session_id}/proxy").json()
         self.assertTrue(config["enabled"])
         self.assertEqual(config["username"], "proxy-user")
@@ -114,6 +119,136 @@ class ApiTests(unittest.TestCase):
             tested = self.client.post(f"/api/sessions/{session_id}/proxy/test")
         self.assertEqual(tested.status_code, 200, tested.text)
         self.assertEqual(tested.json()["latency_ms"], 42)
+
+        deleted = self.client.delete(f"/api/sessions/{session_id}/proxy")
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertTrue(deleted.json()["fail_closed"])
+        with get_connection() as connection:
+            cleared = connection.execute(
+                """
+                SELECT proxy_enabled, proxy_type, proxy_host, proxy_port,
+                       proxy_username_encrypted, proxy_password_encrypted,
+                       proxy_last_status, proxy_latency_ms, proxy_last_error,
+                       proxy_last_test_at, status, last_error
+                FROM telegram_sessions WHERE id=?
+                """,
+                (session_id,),
+            ).fetchone()
+        self.assertEqual(cleared["proxy_enabled"], 0)
+        self.assertEqual(cleared["status"], "proxy_error")
+        self.assertIn("ana IP", cleared["last_error"])
+        for field in (
+            "proxy_type", "proxy_host", "proxy_port", "proxy_username_encrypted",
+            "proxy_password_encrypted", "proxy_last_status", "proxy_latency_ms",
+            "proxy_last_error", "proxy_last_test_at",
+        ):
+            self.assertIsNone(cleared[field], field)
+
+    def test_proxy_health_distinguishes_pending_error_and_batch_wait(self):
+        from app.database import get_connection, utc_now
+
+        now = utc_now()
+        with get_connection() as connection:
+            ids = []
+            for label, status, enabled, last_status in (
+                ("Pending", "proxy_pending", 1, None),
+                ("Failed", "proxy_error", 1, "failed"),
+                ("Waiting", "batch_wait", 1, "success"),
+            ):
+                ids.append(connection.execute(
+                    """
+                    INSERT INTO telegram_sessions(
+                        label, phone_masked, phone_encrypted, session_encrypted,
+                        display_name, status, proxy_enabled, proxy_type, proxy_host,
+                        proxy_port, proxy_last_status, batch_cooldown_until,
+                        created_at, updated_at
+                    ) VALUES (?, '+90 ***', 'enc', 'session', ?, ?, ?, 'http',
+                              'proxy.local', 8080, ?, '2099-01-01T00:00:00+00:00', ?, ?)
+                    """,
+                    (label, label, status, enabled, last_status, now, now),
+                ).lastrowid)
+        sessions = {item["id"]: item for item in self.client.get("/api/sessions").json()}
+        self.assertEqual(sessions[ids[0]]["health_score"], 50)
+        self.assertEqual(sessions[ids[0]]["health_label"], "Proxy testi bekliyor")
+        self.assertEqual(sessions[ids[1]]["health_score"], 0)
+        self.assertEqual(sessions[ids[1]]["health_label"], "Proxy çalışmıyor")
+        self.assertEqual(sessions[ids[2]]["health_score"], 85)
+        self.assertEqual(sessions[ids[2]]["health_label"], "Parti beklemesi")
+
+    def test_bulk_proxy_import_assigns_only_empty_sessions(self):
+        from app.database import get_connection, utc_now
+
+        now = utc_now()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET proxy_enabled=1, proxy_type='socks5', proxy_host='occupied.local', proxy_port=9999
+                WHERE TRIM(COALESCE(proxy_host, ''))=''
+                """
+            )
+            fixed_id = connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    display_name, status, proxy_enabled, proxy_type, proxy_host, proxy_port,
+                    created_at, updated_at
+                ) VALUES ('Sabit', '+90 ***', 'enc', 'session', 'Sabit', 'proxy_error',
+                          0, 'socks5', 'keep.proxy', 1080, ?, ?)
+                """,
+                (now, now),
+            ).lastrowid
+            empty_ids = [
+                connection.execute(
+                    """
+                    INSERT INTO telegram_sessions(
+                        label, phone_masked, phone_encrypted, session_encrypted,
+                        display_name, status, created_at, updated_at
+                    ) VALUES (?, '+90 ***', 'enc', 'session', ?, 'proxy_error', ?, ?)
+                    """,
+                    (f"Boş {index}", f"Boş {index}", now, now),
+                ).lastrowid
+                for index in (1, 2)
+            ]
+
+        response = self.client.post(
+            "/api/proxies/bulk-assign",
+            json={
+                "default_proxy_type": "socks5",
+                "content": (
+                    "10.0.0.1:1080:user1:pass1\n"
+                    "user2:pass2@10.0.0.2:1081\n"
+                    "http://user3:pass3@10.0.0.3:8080\n"
+                    "gecersiz-satir\n"
+                ),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result = response.json()
+        self.assertEqual(result["assigned_count"], 2)
+        self.assertEqual(len(result["invalid_lines"]), 1)
+        self.assertEqual(result["unused_proxy_count"], 1)
+        self.assertEqual(result["unassigned_session_count"], 0)
+        with get_connection() as connection:
+            fixed = connection.execute(
+                "SELECT proxy_host, proxy_port FROM telegram_sessions WHERE id=?",
+                (fixed_id,),
+            ).fetchone()
+            assigned = connection.execute(
+                """
+                SELECT id, status, proxy_host, proxy_port,
+                       proxy_username_encrypted, proxy_password_encrypted
+                FROM telegram_sessions WHERE id IN (?, ?) ORDER BY id
+                """,
+                tuple(empty_ids),
+            ).fetchall()
+        self.assertEqual(fixed["proxy_host"], "keep.proxy")
+        self.assertEqual(fixed["proxy_port"], 1080)
+        self.assertEqual([row["proxy_host"] for row in assigned], ["10.0.0.1", "10.0.0.2"])
+        self.assertTrue(all(row["status"] == "proxy_pending" for row in assigned))
+        self.assertNotEqual(assigned[0]["proxy_username_encrypted"], "user1")
+        self.assertNotEqual(assigned[0]["proxy_password_encrypted"], "pass1")
 
     def test_dashboard_is_empty_initially(self):
         from app.database import get_connection
@@ -137,6 +272,77 @@ class ApiTests(unittest.TestCase):
         scans = self.client.get("/api/activity-scans")
         self.assertEqual(scans.status_code, 200)
         self.assertEqual(scans.json()[0]["window_hours"], 24)
+
+    def test_completed_activity_scan_prepares_transfer_and_selects_candidates(self):
+        from app.database import get_connection, utc_now
+
+        now = utc_now()
+        with get_connection() as connection:
+            session_id = connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    display_name, status, created_at, updated_at
+                ) VALUES ('Akış', '+90 ***', 'enc', 'session', 'Akış', 'active', ?, ?)
+                """,
+                (now, now),
+            ).lastrowid
+            scan_id = connection.execute(
+                """
+                INSERT INTO activity_scans(
+                    name, session_id, group_ref, group_id, group_title, window_hours,
+                    status, last_run_at, unique_users, created_at, updated_at
+                ) VALUES ('Hızlı tarama', ?, '-100111', 111, 'Kaynak', 24,
+                          'completed', ?, 250, ?, ?)
+                """,
+                (session_id, now, now, now),
+            ).lastrowid
+
+        async def fake_preview(job):
+            with get_connection() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO job_candidates(
+                        job_id, telegram_user_id, display_name, access_hash,
+                        status, reason, created_at
+                    ) VALUES (?, 77, 'Aktif Üye', 123456, 'eligible', 'Uygun', ?)
+                    """,
+                    (job["id"], now),
+                )
+                connection.execute(
+                    "UPDATE transfer_jobs SET status='previewed', previewed_at=?, candidate_count=1 WHERE id=?",
+                    (now, job["id"]),
+                )
+            return {"eligible": 1, "permissions": {"can_invite_users": True}}
+
+        target = {
+            "id": 222,
+            "title": "Hedef",
+            "username": "hedef",
+            "kind": "megagroup",
+            "participants_count": 5,
+            "creator": True,
+            "admin_rights": True,
+        }
+        with patch("app.main.resolve_group", new=AsyncMock(return_value=target)), patch(
+            "app.main.preview_job_candidates", new=AsyncMock(side_effect=fake_preview)
+        ):
+            response = self.client.post(
+                f"/api/activity-scans/{scan_id}/prepare-transfer",
+                json={"target_ref": "@hedef", "max_users": 100},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["selected_count"], 1)
+        with get_connection() as connection:
+            job = connection.execute(
+                "SELECT * FROM transfer_jobs WHERE id=?", (response.json()["job_id"],)
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT * FROM job_candidates WHERE job_id=?", (job["id"],)
+            ).fetchone()
+        self.assertEqual(job["max_users"], 100)
+        self.assertEqual(candidate["selected"], 1)
 
     def test_approval_requires_selection_and_history_waits_for_invite(self):
         from app.database import get_connection, utc_now
@@ -181,6 +387,65 @@ class ApiTests(unittest.TestCase):
                 "SELECT * FROM member_history WHERE telegram_user_id=98765"
             ).fetchone()
         self.assertIsNone(history)
+
+    def test_execute_job_runs_directly_from_the_button_request(self):
+        from app.database import get_connection, utc_now
+
+        now = utc_now()
+        with get_connection() as connection:
+            session_id = connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    display_name, status, created_at, updated_at
+                ) VALUES ('Worker', '+90 ***', 'enc', 'session', 'Worker', 'active', ?, ?)
+                """,
+                (now, now),
+            ).lastrowid
+            job_id = connection.execute(
+                """
+                INSERT INTO transfer_jobs(
+                    name, session_id, source_ref, target_ref, status, previewed_at,
+                    approved_at, candidate_count, created_at, updated_at
+                ) VALUES ('Worker işi', ?, '@source', '@target', 'approved', ?, ?, 1, ?, ?)
+                """,
+                (session_id, now, now, now, now),
+            ).lastrowid
+            connection.execute(
+                """
+                INSERT INTO job_candidates(
+                    job_id, telegram_user_id, display_name, access_hash, source_message_id,
+                    status, reason, selected, created_at
+                ) VALUES (?, 12345, 'Worker Adayı', 987654, 321, 'eligible', 'Uygun', 1, ?)
+                """,
+                (job_id, now),
+            )
+
+        async def fake_execute(requested_job_id):
+            with get_connection() as connection:
+                connection.execute(
+                    """
+                    UPDATE transfer_jobs
+                    SET status='completed', processed=1, succeeded=1, updated_at=?
+                    WHERE id=?
+                    """,
+                    (utc_now(), requested_job_id),
+                )
+
+        executor = AsyncMock(side_effect=fake_execute)
+        with patch("app.main.execute_invite_job", executor):
+            response = self.client.post(f"/api/jobs/{job_id}/execute")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "completed")
+        self.assertEqual(response.json()["succeeded"], 1)
+        executor.assert_awaited_once_with(job_id)
+        with get_connection() as connection:
+            job = connection.execute(
+                "SELECT status FROM transfer_jobs WHERE id=?",
+                (job_id,),
+            ).fetchone()
+        self.assertEqual(job["status"], "completed")
 
     def test_rejects_same_source_and_target(self):
         response = self.client.post("/api/jobs", json={

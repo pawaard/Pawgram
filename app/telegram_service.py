@@ -1,11 +1,10 @@
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 import asyncio
-import random
 import re
 from time import perf_counter
 
-from telethon import TelegramClient
+from telethon import TelegramClient, utils
 from telethon.errors import (
     ChatAdminRequiredError,
     FloodWaitError,
@@ -20,12 +19,15 @@ from telethon.errors import (
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import GetParticipantRequest, InviteToChannelRequest, JoinChannelRequest
 from telethon.tl.functions.messages import CheckChatInviteRequest, GetFullChatRequest, ImportChatInviteRequest
+from telethon.tl.functions.users import GetUsersRequest
 from telethon.tl.types import (
     Channel,
     ChannelParticipantsAdmins,
     Chat,
     ChatParticipantAdmin,
     ChatParticipantCreator,
+    InputUser,
+    InputUserFromMessage,
     User,
 )
 from python_socks import ProxyType
@@ -54,6 +56,10 @@ class SessionBudgetWaiting(RuntimeError):
         super().__init__(
             "Tüm aktif hesaplar Pawgram'ın güvenli günlük işlem eşiğine ulaştı. İşlem sonraki güvenli pencerede otomatik devam edecek."
         )
+
+
+class ProxyUnavailableError(RuntimeError):
+    pass
 
 
 @dataclass
@@ -190,6 +196,29 @@ def get_session_record(session_id: int) -> dict:
 async def _client_for(session_id: int) -> TelegramClient:
     api_id, api_hash = _credentials()
     record = get_session_record(session_id)
+    if not record.get("proxy_enabled"):
+        message = (
+            "Bu Telegram session için sabit proxy atanmamış. Ayarlar > Session proxy "
+            "yönetiminden proxy tanımlayın veya Toplu Proxy Ekle ile boş hesaba proxy dağıtın."
+        )
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE telegram_sessions SET status='proxy_error', last_error=?, updated_at=? WHERE id=?",
+                (message, utc_now(), session_id),
+            )
+        add_log("error", "proxy", message, session_id)
+        add_notification(
+            "error",
+            "Session proxy bekliyor",
+            "Hesap çalıştırılmadı. Ayarlar'dan sabit proxy girin veya Toplu Proxy Ekle ile boş hesaba proxy atayın.",
+            "settings",
+        )
+        raise ProxyUnavailableError(message)
+    try:
+        await test_session_proxy(session_id)
+    except Exception as error:
+        raise ProxyUnavailableError(str(error)) from error
+    record = get_session_record(session_id)
     client = TelegramClient(
         StringSession(decrypt(record["session_encrypted"])),
         api_id,
@@ -198,10 +227,33 @@ async def _client_for(session_id: int) -> TelegramClient:
         timeout=12,
         connection_retries=1,
     )
-    await client.connect()
-    if not await client.is_user_authorized():
-        await client.disconnect()
-        raise RuntimeError("Telegram session geçersiz; hesabı yeniden bağlayın.")
+    try:
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            raise RuntimeError("Telegram session geçersiz; hesabı yeniden bağlayın.")
+    except Exception as error:
+        message = (
+            "Proxy testi geçse de Telegram bağlantısı kurulamadı. Proxy sağlayıcınızda Telegram "
+            f"erişimini ve IP yetkilendirmesini kontrol edin: {error}"
+        )
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='proxy_error', proxy_last_status='failed', proxy_last_error=?,
+                    last_error=?, updated_at=? WHERE id=?
+                """,
+                (message[:500], message[:500], utc_now(), session_id),
+            )
+        add_log("error", "proxy", message, session_id)
+        add_notification(
+            "error",
+            "Telegram proxy bağlantısı kurulamadı",
+            "Hesap çalıştırılmadı ve ana IP kullanılmadı. Proxy sağlayıcınızda Telegram erişimini ve IP yetkilendirmesini kontrol edin.",
+            "settings",
+        )
+        raise ProxyUnavailableError(message) from error
     return client
 
 
@@ -235,50 +287,95 @@ async def test_session_proxy(session_id: int) -> dict:
     config = _proxy_config(record)
     if not config:
         raise RuntimeError("Bu session için proxy etkin değil.")
+    selected_type = config["proxy_type"]
+    candidate_types = [selected_type] + [item for item in ("socks5", "http") if item != selected_type]
+    attempt_errors: list[str] = []
     try:
         proxy_types = {"socks5": ProxyType.SOCKS5, "http": ProxyType.HTTP}
-        started = perf_counter()
-        proxy = Proxy.create(
-            proxy_types[config["proxy_type"]],
-            config["addr"],
-            config["port"],
-            username=config["username"],
-            password=config["password"],
-            rdns=True,
-        )
-        socket = await proxy.connect(
-            dest_host="149.154.167.51",
-            dest_port=443,
-            timeout=12,
-        )
-        latency_ms = max(1, round((perf_counter() - started) * 1000))
+        socket = None
+        detected_type = selected_type
+        latency_ms = 0
+        for proxy_type in candidate_types:
+            started = perf_counter()
+            try:
+                proxy = Proxy.create(
+                    proxy_types[proxy_type],
+                    config["addr"],
+                    config["port"],
+                    username=config["username"],
+                    password=config["password"],
+                    rdns=True,
+                )
+                async with asyncio.timeout(8):
+                    socket = await proxy.connect(
+                        dest_host="149.154.167.51",
+                        dest_port=443,
+                        timeout=7,
+                    )
+                latency_ms = max(1, round((perf_counter() - started) * 1000))
+                detected_type = proxy_type
+                break
+            except Exception as attempt_error:
+                attempt_errors.append(
+                    f"{proxy_type.upper()}: {str(attempt_error) or attempt_error.__class__.__name__}"
+                )
+        if socket is None:
+            raise RuntimeError(" | ".join(attempt_errors))
         socket.close()
         with get_connection() as connection:
             connection.execute(
                 """
                 UPDATE telegram_sessions
-                SET proxy_last_status='success', proxy_latency_ms=?, proxy_last_error=NULL,
-                    proxy_last_test_at=?, updated_at=?
+                SET proxy_type=?, proxy_last_status='success', proxy_latency_ms=?, proxy_last_error=NULL,
+                    proxy_last_test_at=?,
+                    status=CASE WHEN status IN ('proxy_error', 'proxy_pending') THEN 'active' ELSE status END,
+                    last_error=CASE WHEN status IN ('proxy_error', 'proxy_pending') THEN NULL ELSE last_error END,
+                    updated_at=?
                 WHERE id=?
                 """,
-                (latency_ms, utc_now(), utc_now(), session_id),
+                (detected_type, latency_ms, utc_now(), utc_now(), session_id),
             )
-        add_log("success", "proxy", f"Proxy bağlantı testi başarılı: {latency_ms} ms", session_id)
-        return {"ok": True, "status": "success", "latency_ms": latency_ms}
+        auto_detected = detected_type != selected_type
+        detail = f"Proxy bağlantı testi başarılı: {latency_ms} ms ({detected_type.upper()})"
+        if auto_detected:
+            detail += f"; {selected_type.upper()} yerine {detected_type.upper()} otomatik seçildi"
+        add_log("success", "proxy", detail, session_id)
+        return {
+            "ok": True,
+            "status": "success",
+            "latency_ms": latency_ms,
+            "proxy_type": detected_type,
+            "auto_detected": auto_detected,
+        }
     except Exception as error:
         message = str(error) or error.__class__.__name__
         with get_connection() as connection:
             connection.execute(
                 """
                 UPDATE telegram_sessions
-                SET proxy_last_status='failed', proxy_latency_ms=NULL, proxy_last_error=?,
-                    proxy_last_test_at=?, updated_at=?
+                SET status='proxy_error', proxy_last_status='failed', proxy_latency_ms=NULL,
+                    proxy_last_error=?, proxy_last_test_at=?, last_error=?, updated_at=?
                 WHERE id=?
                 """,
-                (message[:500], utc_now(), utc_now(), session_id),
+                (
+                    message[:500],
+                    utc_now(),
+                    "Proxy çalışmıyor. Host/port, kullanıcı adı/parola, IP yetkilendirmesi ve proxy süresini kontrol edin."[:500],
+                    utc_now(),
+                    session_id,
+                ),
             )
         add_log("error", "proxy", f"Proxy bağlantı testi başarısız: {message}", session_id)
-        raise RuntimeError(f"Proxy bağlantısı kurulamadı: {message}") from error
+        add_notification(
+            "error",
+            "Proxy bağlantısı durduruldu",
+            "Session kullanılmadı. Proxy host/port, kullanıcı bilgileri, IP yetkilendirmesi ve paket süresini kontrol edin.",
+            "settings",
+        )
+        raise ProxyUnavailableError(
+            "Proxy bağlantısı kurulamadı; ana IP kullanılmadı. Host/port, kullanıcı adı/parola, "
+            f"IP yetkilendirmesi ve proxy süresini kontrol edin. Ayrıntı: {message}"
+        ) from error
 
 
 async def _resolve_entity(client: TelegramClient, reference: str):
@@ -288,6 +385,31 @@ async def _resolve_entity(client: TelegramClient, reference: str):
         # StringSession kalıcı entity önbelleği tutmaz. Dialogları almak ID çözümlemesini güvenilir hale getirir.
         await client.get_dialogs()
     return await client.get_entity(clean_reference)
+
+
+def _activity_access_error(
+    requested_session_id: int | None,
+    access_errors: list[tuple[int, Exception]],
+) -> RuntimeError:
+    if not access_errors:
+        return RuntimeError("Seçilen gruba erişim denenirken bilinmeyen bir hata oluştu.")
+
+    session_id, error = access_errors[-1]
+    detail = (str(error).strip() or error.__class__.__name__).rstrip(".")
+    invite_note = (
+        " Hesap grupta değilse özel grup için t.me/+... davet bağlantısını kullanın."
+    )
+    if requested_session_id:
+        return RuntimeError(
+            f"Seçilen session gruba erişemedi: {detail}.{invite_note}"
+        )
+
+    attempted_ids = ", ".join(str(item[0]) for item in access_errors)
+    return RuntimeError(
+        "Uygun session'lar seçilen gruba erişemedi "
+        f"(denenen session ID: {attempted_ids}). Son hata, session {session_id}: "
+        f"{detail}.{invite_note}"
+    )
 
 
 def _private_invite_hash(reference: str) -> str | None:
@@ -359,11 +481,12 @@ def _activity_session_candidates(requested_session_id: int | None) -> list[int]:
             FROM telegram_sessions s
             LEFT JOIN session_usage_daily u
               ON u.session_id = s.id AND u.usage_date = ?
-            WHERE s.status = 'active'
+            WHERE s.status IN ('active', 'proxy_pending')
                OR (s.status = 'flood_wait' AND s.flood_wait_until <= ?)
+               OR (s.status = 'batch_wait' AND s.batch_cooldown_until <= ?)
             ORDER BY s.id ASC
             """,
-            (today, utc_now()),
+            (today, utc_now(), utc_now()),
         ).fetchall()
     if requested_session_id:
         requested = next((row for row in sessions if row["id"] == requested_session_id), None)
@@ -389,9 +512,7 @@ def _activity_session_candidates(requested_session_id: int | None) -> list[int]:
         start_index = (all_ids.index(cursor_id) + 1) % len(all_ids)
     circular_ids = all_ids[start_index:] + all_ids[:start_index]
     available_ids = {row["id"] for row in available}
-    selected_id = next(session_id for session_id in circular_ids if session_id in available_ids)
-    set_app_setting("activity_round_robin_cursor", str(selected_id))
-    return [selected_id]
+    return [session_id for session_id in circular_ids if session_id in available_ids]
 
 
 def _record_activity_operation(session_id: int) -> None:
@@ -450,7 +571,7 @@ async def list_groups(session_id: int) -> list[dict]:
                 entity = dialog.entity
                 groups.append(
                     {
-                        "id": entity.id,
+                        "id": utils.get_peer_id(entity),
                         "title": dialog.name,
                         "username": getattr(entity, "username", None),
                         "kind": "group" if dialog.is_group else "channel",
@@ -460,6 +581,28 @@ async def list_groups(session_id: int) -> list[dict]:
         return groups
     finally:
         await client.disconnect()
+
+
+async def _iter_transfer_source_users(
+    client: TelegramClient,
+    source: Channel | Chat,
+    participant_limit: int = 5000,
+    message_limit: int = 50000,
+):
+    """Yield users only with a source-message context valid for direct adding."""
+    seen_ids: set[int] = set()
+    async for message in client.iter_messages(source, limit=message_limit):
+        sender_id = getattr(message, "sender_id", None)
+        if not sender_id or sender_id in seen_ids:
+            continue
+        sender = await message.get_sender()
+        if not isinstance(sender, User):
+            continue
+        message_id = getattr(message, "id", None)
+        if not message_id:
+            continue
+        seen_ids.add(sender.id)
+        yield sender, message_id
 
 
 async def preview_job_candidates(job: dict) -> dict:
@@ -533,39 +676,106 @@ async def preview_job_candidates(job: dict) -> dict:
             "admin": 0,
             "previously_used": 0,
         }
-        scan_limit = min(max(job["max_users"] * 5, 100), 5000)
-        async for user in client.iter_participants(source, limit=scan_limit):
-            if not isinstance(user, User):
-                continue
-            display_name = " ".join(
-                value for value in [user.first_name, user.last_name] if value
-            ).strip() or "İsimsiz kullanıcı"
-            if getattr(user, "deleted", False):
+        examined_ids: set[int] = set()
+        activity_scan_id: int | None = None
+
+        def add_candidate(
+            user_id: int,
+            display_name: str,
+            username: str | None,
+            access_hash: int | None,
+            source_message_id: int | None,
+            *,
+            is_bot: bool = False,
+            is_deleted: bool = False,
+        ) -> bool:
+            if user_id in examined_ids:
+                return False
+            examined_ids.add(user_id)
+            if is_deleted:
                 status, reason = "deleted", "Silinmiş Telegram hesabı"
-            elif getattr(user, "bot", False):
+            elif is_bot:
                 status, reason = "bot", "Bot hesabı"
-            elif user.id in source_admin_ids:
+            elif user_id in source_admin_ids:
                 status, reason = "admin", "Kaynak grubun sahibi veya yöneticisi"
-            elif user.id in target_member_ids:
+            elif user_id in target_member_ids:
                 status, reason = "existing", "Gönderilecek grupta zaten bulunuyor"
-            elif user.id in previously_used_ids:
+            elif user_id in previously_used_ids:
                 status, reason = "previously_used", "Daha önce Pawgram iş geçmişine alınmış"
             else:
                 status, reason = "eligible", "Önizleme için uygun"
             counts[status] += 1
+            if status in {"admin", "bot", "deleted"}:
+                return False
             rows.append(
                 (
                     job_id,
-                    user.id,
+                    user_id,
                     display_name,
-                    user.username,
+                    username,
+                    access_hash,
+                    source_message_id,
                     status,
                     reason,
                     utc_now(),
                 )
             )
-            if counts["eligible"] >= job["max_users"]:
+            return counts["eligible"] >= job["max_users"]
+
+        with get_connection() as connection:
+            activity_scan = connection.execute(
+                """
+                SELECT id FROM activity_scans
+                WHERE session_id=? AND status IN ('completed', 'scheduled')
+                  AND (group_id=? OR LOWER(group_ref)=LOWER(?) OR LOWER(group_title)=LOWER(?))
+                ORDER BY last_run_at DESC, id DESC
+                LIMIT 1
+                """,
+                (session_id, job["source_id"], job["source_ref"], job["source_title"]),
+            ).fetchone()
+            activity_users = []
+            if activity_scan:
+                activity_scan_id = activity_scan["id"]
+                activity_users = connection.execute(
+                    """
+                    SELECT telegram_user_id, display_name, username, access_hash, source_message_id
+                    FROM activity_results
+                    WHERE scan_id=? AND source_message_id IS NOT NULL
+                    ORDER BY last_message_at DESC, id
+                    """,
+                    (activity_scan_id,),
+                ).fetchall()
+
+        for activity_user in activity_users:
+            if add_candidate(
+                activity_user["telegram_user_id"],
+                activity_user["display_name"],
+                activity_user["username"],
+                activity_user.get("access_hash"),
+                activity_user.get("source_message_id"),
+            ):
                 break
+
+        if counts["eligible"] < job["max_users"]:
+            participant_limit = min(max(job["max_users"] * 5, 100), 5000)
+            async for user, source_message_id in _iter_transfer_source_users(
+                client,
+                source,
+                participant_limit=participant_limit,
+            ):
+                display_name = " ".join(
+                    value for value in [user.first_name, user.last_name] if value
+                ).strip() or "İsimsiz kullanıcı"
+                if add_candidate(
+                    user.id,
+                    display_name,
+                    user.username,
+                    getattr(user, "access_hash", None),
+                    source_message_id,
+                    is_bot=bool(getattr(user, "bot", False)),
+                    is_deleted=bool(getattr(user, "deleted", False)),
+                ):
+                    break
 
         now = utc_now()
         with get_connection() as connection:
@@ -573,8 +783,9 @@ async def preview_job_candidates(job: dict) -> dict:
             connection.executemany(
                 """
                 INSERT INTO job_candidates(
-                    job_id, telegram_user_id, display_name, username, status, reason, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    job_id, telegram_user_id, display_name, username, access_hash,
+                    source_message_id, status, reason, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -589,13 +800,16 @@ async def preview_job_candidates(job: dict) -> dict:
         add_log(
             "success",
             "preview",
-            f"Aday önizlemesi tamamlandı: {counts['eligible']} uygun, {len(rows) - counts['eligible']} atlandı",
+            f"Aday önizlemesi tamamlandı: {counts['eligible']} uygun, "
+            f"{sum(value for key, value in counts.items() if key != 'eligible')} atlandı",
             session_id,
             job_id,
         )
+
         return {
             **counts,
-            "scanned": len(rows),
+            "scanned": len(examined_ids),
+            "activity_scan_id": activity_scan_id,
             "target_members_checked": len(target_member_ids),
             "source_admins_excluded": len(source_admin_ids),
             "history_users_checked": len(previously_used_ids),
@@ -622,134 +836,248 @@ async def preview_job_candidates(job: dict) -> dict:
 
 
 async def execute_invite_job(job_id: int) -> None:
-    """Invite explicitly selected candidates. 
-    
-    If the current session reaches its daily quota, it automatically switches 
-    to the next available active session and continues without stopping.
-    """
+    """Add explicitly selected candidates with one fixed, fail-closed session."""
     with get_connection() as connection:
         job = connection.execute("SELECT * FROM transfer_jobs WHERE id=?", (job_id,)).fetchone()
         candidates = connection.execute(
             """
             SELECT * FROM job_candidates
             WHERE job_id=? AND selected=1 AND status='eligible'
-            ORDER BY id
+            ORDER BY CASE WHEN source_message_id IS NOT NULL THEN 0 ELSE 1 END, id
             """,
             (job_id,),
         ).fetchall()
-        if not job or job["status"] not in {"approved", "paused_quota"} or not candidates:
+        if not job or job["status"] not in {"approved", "paused_quota", "paused_batch", "proxy_error", "flood_wait", "queued_execution"} or not candidates:
             return
         now = utc_now()
-        connection.execute(
+        claimed = connection.execute(
             """
             UPDATE transfer_jobs
             SET status='running', execution_started_at=COALESCE(execution_started_at, ?),
                 last_error=NULL, updated_at=?
-            WHERE id=?
+            WHERE id=? AND status IN ('approved', 'paused_quota', 'paused_batch', 'proxy_error', 'flood_wait', 'queued_execution')
             """,
             (now, now, job_id),
         )
+        if claimed.rowcount != 1:
+            return
 
     current_session_id = job["session_id"]
-    client = await _client_for(current_session_id)
-    
+    with get_connection() as connection:
+        current_session = connection.execute(
+            "SELECT status, flood_wait_until, batch_cooldown_until FROM telegram_sessions WHERE id=?",
+            (current_session_id,),
+        ).fetchone()
+        if current_session and current_session["status"] == "batch_wait":
+            cooldown_until = current_session.get("batch_cooldown_until")
+            if cooldown_until and cooldown_until > utc_now():
+                message = (
+                    "Bu session 3 başarılı eklemeden sonra 30 dakikalık parti beklemesinde. "
+                    f"Yeniden çalışma zamanı: {cooldown_until}"
+                )
+                connection.execute(
+                    "UPDATE transfer_jobs SET status='paused_batch', last_error=?, updated_at=? WHERE id=?",
+                    (message, utc_now(), job_id),
+                )
+                return
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='active', batch_success_count=0, batch_cooldown_until=NULL, updated_at=?
+                WHERE id=?
+                """,
+                (utc_now(), current_session_id),
+            )
+        if current_session and current_session["status"] == "flood_wait":
+            wait_until = current_session.get("flood_wait_until")
+            if wait_until and wait_until <= utc_now():
+                connection.execute(
+                    "UPDATE telegram_sessions SET status='active', flood_wait_until=NULL, updated_at=? WHERE id=?",
+                    (utc_now(), current_session_id),
+                )
+            else:
+                message = (
+                    "Mevcut Telegram session spam koruması nedeniyle 24 saat dinleniyor. "
+                    "Kısıtlamayı başka hesapla otomatik aşma yapılmaz."
+                )
+                connection.execute(
+                    "UPDATE transfer_jobs SET status='flood_wait', last_error=?, updated_at=? WHERE id=?",
+                    (message, utc_now(), job_id),
+                )
+                return
+    client = None
+
     try:
-        source = await _resolve_entity(client, job["source_ref"])
-        target = await _resolve_entity(client, job["target_ref"])
-        if not isinstance(source, (Channel, Chat)) or not isinstance(target, (Channel, Chat)):
-            raise RuntimeError("Kaynak ve hedef Telegram grubu olmalıdır.")
+        try:
+            client = await asyncio.wait_for(_client_for(current_session_id), timeout=30)
+        except TimeoutError as error:
+            raise ProxyUnavailableError(
+                "Proxy üzerinden Telegram session bağlantısı 30 saniye içinde kurulamadı; "
+                "işlem durduruldu ve ana IP kullanılmadı. Proxy yanıtını, Telegram erişimini ve IP yetkilendirmesini kontrol edin."
+            ) from error
+        add_log("info", "invite", "Üye ekleme için Telegram session bağlantısı hazır", current_session_id, job_id)
+
+        try:
+            target = await asyncio.wait_for(
+                _resolve_entity(client, job["target_ref"]),
+                timeout=30,
+            )
+        except TimeoutError as error:
+            raise RuntimeError("Hedef grup 30 saniye içinde doğrulanamadı.") from error
+        if not isinstance(target, (Channel, Chat)):
+            raise RuntimeError("Hedef Telegram grubu olmalıdır.")
         rights = getattr(target, "admin_rights", None)
         if not (getattr(target, "creator", False) or (rights and getattr(rights, "invite_users", False))):
             raise ChatAdminRequiredError(request=None)
-
-        selected_ids = {row["telegram_user_id"] for row in candidates}
-        users: dict[int, User] = {}
-        async for user in client.iter_participants(source, limit=5000):
-            if isinstance(user, User) and user.id in selected_ids:
-                users[user.id] = user
-                if len(users) == len(selected_ids):
-                    break
-
-        configured_quota = max(
-            1,
-            min(
-                int(job["daily_limit"]),
-                int(get_app_setting("activity_daily_quota") or DEFAULT_DAILY_ACTIVITY_QUOTA),
-            ),
+        add_log(
+            "info",
+            "invite",
+            f"Hedef grup hazır; {len(candidates)} seçili üye doğrudan ekleme sırasına alındı",
+            current_session_id,
+            job_id,
         )
 
-        for candidate_index, candidate in enumerate(candidates):
+        source_input = None
+        if any(candidate.get("source_message_id") for candidate in candidates):
+            try:
+                source = await asyncio.wait_for(
+                    _resolve_entity(client, job["source_ref"]),
+                    timeout=30,
+                )
+                source_input = await asyncio.wait_for(
+                    client.get_input_entity(source),
+                    timeout=15,
+                )
+            except TimeoutError as error:
+                raise RuntimeError("Kaynak mesaj referansı 30 saniye içinde hazırlanamadı.") from error
+            add_log(
+                "info",
+                "invite",
+                "Mesaj bağlamlı kullanıcı referansları hazırlandı",
+                current_session_id,
+                job_id,
+            )
+
+        # Aktivite taramaları ile üye ekleme denemeleri farklı güvenlik sayaçlarıdır.
+        # Tarama kotası dolmuş olsa bile henüz üye eklememiş bir session'ın
+        # aktarım işi engellenmemelidir.
+        configured_quota = max(1, int(job["daily_limit"]))
+
+        for candidate in candidates:
             today = datetime.now(UTC).date().isoformat()
-            
-            # Mevcut session'ın bugünkü kullanımını kontrol et
+
+            # Günlük sınır aynı hesabı durdurur. Telegram kısıtlarını aşmak için
+            # başka bir hesaba otomatik geçiş yapılmaz.
             with get_connection() as connection:
                 usage = connection.execute(
-                    "SELECT operation_count FROM session_usage_daily WHERE session_id=? AND usage_date=?",
+                    "SELECT invite_count FROM session_invite_usage_daily WHERE session_id=? AND usage_date=?",
                     (current_session_id, today),
                 ).fetchone()
-            used = int(usage["operation_count"]) if usage else 0
+            used = int(usage["invite_count"]) if usage else 0
 
-            # KOTA KONTROLÜ VE OTOMATİK SESSION DEĞİŞİMİ
             if used >= configured_quota:
-                logger_msg = f"Session #{current_session_id} için günlük {configured_quota} kota doldu. Sıradaki session aranıyor..."
-                add_log("info", "quota_switch", logger_msg, current_session_id, job_id)
-
-                # Kotası dolmamış, aktif başka bir session bul
+                message = (
+                    f"Session #{current_session_id} için günlük {configured_quota} başarılı üye ekleme sınırı doldu. "
+                    "Kalan adaylar korunarak iş duraklatıldı; sınır yenilendiğinde aynı session ile devam edin."
+                )
                 with get_connection() as connection:
-                    next_session = connection.execute(
-                        """
-                        SELECT s.id 
-                        FROM telegram_sessions s
-                        LEFT JOIN session_usage_daily u 
-                            ON u.session_id = s.id AND u.usage_date = ?
-                        WHERE s.status = 'active' 
-                          AND s.id != ?
-                          AND COALESCE(u.operation_count, 0) < ?
-                        ORDER BY s.id ASC
-                        LIMIT 1
-                        """,
-                        (today, current_session_id, configured_quota),
-                    ).fetchone()
-
-                if next_session:
-                    new_session_id = next_session["id"]
-                    add_log(
-                        "success", 
-                        "quota_switch", 
-                        f"Kota dolduğu için Session #{current_session_id} -> Session #{new_session_id} geçişi yapıldı.", 
-                        new_session_id, 
-                        job_id
+                    connection.execute(
+                        "UPDATE transfer_jobs SET status='paused_quota', last_error=?, updated_at=? WHERE id=?",
+                        (message, utc_now(), job_id),
                     )
-                    
-                    # Eski client bağlantısını kapat ve yenisine bağlan
-                    await client.disconnect()
-                    current_session_id = new_session_id
-                    client = await _client_for(current_session_id)
-                    
-                    # Hedef & kaynak varlıklarını yeni session ile tekrar doğrula
-                    source = await _resolve_entity(client, job["source_ref"])
-                    target = await _resolve_entity(client, job["target_ref"])
-                    
-                    # Yeni session verisiyle güncellenmiş kullanımı çek
-                    with get_connection() as connection:
-                        usage = connection.execute(
-                            "SELECT operation_count FROM session_usage_daily WHERE session_id=? AND usage_date=?",
-                            (current_session_id, today),
-                        ).fetchone()
-                    used = int(usage["operation_count"]) if usage else 0
-                else:
-                    # Başka kullanılabilir session kalmadıysa işi duraklat
-                    message = f"Tüm aktif session'ların günlük {configured_quota} işlem kotası doldu. İş duraklatıldı."
+                add_log("warning", "quota", message, current_session_id, job_id)
+                add_notification("warning", "Üye ekleme işi duraklatıldı", message, "jobs")
+                return
+
+            # Önizlemede kaydedilen access_hash ile doğrudan Telegram'ın
+            # "Gruba katılımcı ekle" isteğine geçilir. Kaynak grubun binlerce
+            # mesajını burada yeniden taramak hem gereksizdir hem de işi 0/N'de
+            # bekletir.
+            user: User | InputUser | None = None
+            source_message_id = candidate.get("source_message_id")
+            access_hash = candidate.get("access_hash")
+            add_log(
+                "info",
+                "invite_candidate",
+                f"{candidate['telegram_user_id']}: Telegram kullanıcı referansı doğrulanıyor",
+                current_session_id,
+                job_id,
+            )
+            if source_message_id and source_input is not None:
+                contextual_user = InputUserFromMessage(
+                    source_input,
+                    int(source_message_id),
+                    candidate["telegram_user_id"],
+                )
+                try:
+                    resolved_users = await asyncio.wait_for(
+                        client(GetUsersRequest([contextual_user])),
+                        timeout=30,
+                    )
+                except Exception:
+                    resolved_users = []
+                resolved_user = next(
+                    (
+                        item
+                        for item in resolved_users
+                        if isinstance(item, User)
+                        and item.id == candidate["telegram_user_id"]
+                        and getattr(item, "access_hash", None) is not None
+                    ),
+                    None,
+                )
+                if resolved_user is not None:
+                    access_hash = int(resolved_user.access_hash)
+                    user = InputUser(resolved_user.id, access_hash)
                     with get_connection() as connection:
                         connection.execute(
-                            "UPDATE transfer_jobs SET status='paused_quota', last_error=?, updated_at=? WHERE id=?",
-                            (message, utc_now(), job_id),
+                            "UPDATE job_candidates SET access_hash=? WHERE id=?",
+                            (access_hash, candidate["id"]),
                         )
-                    add_log("warning", "quota", message, current_session_id, job_id)
-                    add_notification("warning", "Davet işi duraklatıldı", message, "jobs")
-                    return
+                else:
+                    user = contextual_user
+            elif access_hash is not None:
+                stored_user = InputUser(candidate["telegram_user_id"], int(access_hash))
+                try:
+                    resolved_users = await asyncio.wait_for(
+                        client(GetUsersRequest([stored_user])),
+                        timeout=30,
+                    )
+                except Exception:
+                    resolved_users = []
+                resolved_user = next(
+                    (
+                        item
+                        for item in resolved_users
+                        if isinstance(item, User)
+                        and item.id == candidate["telegram_user_id"]
+                        and getattr(item, "access_hash", None) is not None
+                    ),
+                    None,
+                )
+                if resolved_user is not None:
+                    user = InputUser(resolved_user.id, int(resolved_user.access_hash))
+            if user is None and candidate.get("username"):
+                try:
+                    resolved_user = await asyncio.wait_for(
+                        client.get_entity(candidate["username"]),
+                        timeout=20,
+                    )
+                except Exception:
+                    resolved_user = None
+                if isinstance(resolved_user, User):
+                    user = resolved_user
+            elif user is None and access_hash is None:
+                try:
+                    resolved_user = await asyncio.wait_for(
+                        client.get_entity(candidate["telegram_user_id"]),
+                        timeout=20,
+                    )
+                except Exception:
+                    resolved_user = None
+                if isinstance(resolved_user, User):
+                    user = resolved_user
 
-            user = users.get(candidate["telegram_user_id"])
             if not user:
                 with get_connection() as connection:
                     connection.execute(
@@ -760,26 +1088,40 @@ async def execute_invite_job(job_id: int) -> None:
                         "UPDATE transfer_jobs SET processed=processed+1, failed=failed+1, updated_at=? WHERE id=?",
                         (utc_now(), job_id),
                     )
+                add_log(
+                    "error",
+                    "invite_candidate",
+                    f"{candidate['telegram_user_id']}: Geçerli Telegram kullanıcı referansı bulunamadı; aday eski önizlemeden gelmiş olabilir",
+                    current_session_id,
+                    job_id,
+                )
                 continue
 
             try:
-                await client(InviteToChannelRequest(target, [user]))
+                await asyncio.wait_for(
+                    client(InviteToChannelRequest(target, [user])),
+                    timeout=45,
+                )
+            except TimeoutError:
+                status, reason, counter = (
+                    "failed",
+                    "Telegram üye ekleme isteği 45 saniye içinde yanıt vermedi",
+                    "failed",
+                )
             except UserAlreadyParticipantError:
                 status, reason, counter = "existing", "Kullanıcı hedef grupta zaten bulunuyor", "skipped"
-            except (UserPrivacyRestrictedError, UserChannelsTooMuchError) as error:
-                message = f"Telegram kritik kullanıcı kısıtı bildirdi: {type(error).__name__}; iş durduruldu."
-                with get_connection() as connection:
-                    connection.execute(
-                        "UPDATE transfer_jobs SET status='failed', last_error=?, updated_at=? WHERE id=?",
-                        (message, utc_now(), job_id),
-                    )
-                    connection.execute(
-                        "UPDATE job_candidates SET reason=? WHERE id=?",
-                        (message, candidate["id"]),
-                    )
-                add_log("error", "invite", message, current_session_id, job_id)
-                add_notification("error", "Davet işi durduruldu", message, "jobs")
-                return
+            except UserPrivacyRestrictedError:
+                status, reason, counter = (
+                    "skipped",
+                    "Kullanıcının gizlilik ayarları gruba doğrudan eklenmesine izin vermiyor",
+                    "skipped",
+                )
+            except UserChannelsTooMuchError:
+                status, reason, counter = (
+                    "skipped",
+                    "Kullanıcı Telegram grup/kanal sınırına ulaşmış",
+                    "skipped",
+                )
             except FloodWaitError as error:
                 until = datetime.now(UTC) + timedelta(seconds=error.seconds)
                 message = f"Telegram {error.seconds} saniye FloodWait uyguladı; iş aynı session ile zorunlu beklemeye alındı."
@@ -793,16 +1135,44 @@ async def execute_invite_job(job_id: int) -> None:
                         (message, utc_now(), job_id),
                     )
                 add_log("warning", "flood_wait", message, current_session_id, job_id)
-                add_notification("warning", "Davet işi bekletildi", message, "jobs")
+                add_notification("warning", "Üye ekleme işi bekletildi", message, "jobs")
                 return
-            except (PeerFloodError, ChatAdminRequiredError) as error:
-                raise RuntimeError(f"Telegram davet işlemini durdurdu: {type(error).__name__}") from error
+            except PeerFloodError:
+                until = datetime.now(UTC) + timedelta(hours=24)
+                message = (
+                    f"Session #{current_session_id} Telegram spam korumasına takıldı ve 24 saat dinlenmeye alındı. "
+                    "Kalan adaylar korunmuştur. Kısıtlamayı başka hesapla otomatik aşma yapılmaz; süre dolunca aynı işi yeniden başlatın."
+                )
+                with get_connection() as connection:
+                    connection.execute(
+                        """
+                        UPDATE telegram_sessions
+                        SET status='flood_wait', flood_wait_until=?, last_error=?, updated_at=?
+                        WHERE id=?
+                        """,
+                        (until.isoformat(), message, utc_now(), current_session_id),
+                    )
+                    connection.execute(
+                        "UPDATE transfer_jobs SET status='flood_wait', last_error=?, updated_at=? WHERE id=?",
+                        (message, utc_now(), job_id),
+                    )
+                add_log("warning", "peer_flood", message, current_session_id, job_id)
+                add_notification("warning", "Telegram ekleme kısıtlaması", message, "jobs")
+                return
+            except ChatAdminRequiredError as error:
+                raise RuntimeError(f"Telegram üye ekleme işlemini durdurdu: {type(error).__name__}") from error
             except Exception as error:
-                status, reason, counter = "failed", f"Davet başarısız: {type(error).__name__}", "failed"
+                error_detail = str(error).strip()
+                reason = f"Üye ekleme başarısız: {type(error).__name__}"
+                if error_detail:
+                    reason += f" — {error_detail}"
+                status, counter = "failed", "failed"
             else:
-                status, reason, counter = "invited", "Telegram daveti gönderildi", "succeeded"
+                status, reason, counter = "invited", "Kullanıcı hedef gruba doğrudan eklendi", "succeeded"
 
             now = utc_now()
+            pause_for_batch = False
+            batch_message = ""
             with get_connection() as connection:
                 connection.execute(
                     "UPDATE job_candidates SET status=?, reason=?, processed_at=? WHERE id=?",
@@ -829,14 +1199,66 @@ async def execute_invite_job(job_id: int) -> None:
                             job_id, job["source_id"], job["target_id"], now, now,
                         ),
                     )
-                connection.execute(
-                    """
-                    INSERT INTO session_usage_daily(session_id, usage_date, operation_count, last_used_at)
-                    VALUES (?, ?, 1, ?)
-                    ON CONFLICT(session_id, usage_date) DO UPDATE SET
-                        operation_count=operation_count+1, last_used_at=excluded.last_used_at
-                    """,
-                    (current_session_id, today, now),
+                    # Uygulama kotası yalnızca gerçekten hedef gruba eklenen
+                    # kullanıcıları sayar. Gizlilik, geçersiz kullanıcı ve
+                    # zaten üye gibi başarısız/atlanan sonuçlar kotayı tüketmez.
+                    connection.execute(
+                        """
+                        INSERT INTO session_invite_usage_daily(session_id, usage_date, invite_count, last_used_at)
+                        VALUES (?, ?, 1, ?)
+                        ON CONFLICT(session_id, usage_date) DO UPDATE SET
+                            invite_count=invite_count+1, last_used_at=excluded.last_used_at
+                        """,
+                        (current_session_id, today, now),
+                    )
+                    connection.execute(
+                        """
+                        UPDATE telegram_sessions
+                        SET batch_success_count=COALESCE(batch_success_count, 0)+1, updated_at=?
+                        WHERE id=?
+                        """,
+                        (now, current_session_id),
+                    )
+                    batch_state = connection.execute(
+                        "SELECT batch_success_count FROM telegram_sessions WHERE id=?",
+                        (current_session_id,),
+                    ).fetchone()
+                    if int(batch_state["batch_success_count"] or 0) >= 3:
+                        cooldown_until = datetime.now(UTC) + timedelta(minutes=30)
+                        connection.execute(
+                            """
+                            UPDATE telegram_sessions
+                            SET status='batch_wait', batch_success_count=0,
+                                batch_cooldown_until=?, last_error=NULL, updated_at=?
+                            WHERE id=?
+                            """,
+                            (cooldown_until.isoformat(), now, current_session_id),
+                        )
+                        remaining = connection.execute(
+                            """
+                            SELECT COUNT(*) count FROM job_candidates
+                            WHERE job_id=? AND selected=1 AND status='eligible'
+                            """,
+                            (job_id,),
+                        ).fetchone()["count"]
+                        if remaining:
+                            batch_message = (
+                                f"Session #{current_session_id} bu partide 3 kullanıcı ekledi. "
+                                f"Kalan {remaining} aday korunarak 30 dakika beklemeye alındı; "
+                                f"yeniden çalışma zamanı: {cooldown_until.isoformat()}"
+                            )
+                            connection.execute(
+                                "UPDATE transfer_jobs SET status='paused_batch', last_error=?, updated_at=? WHERE id=?",
+                                (batch_message, now, job_id),
+                            )
+                            pause_for_batch = True
+            if status == "invited":
+                add_log(
+                    "success",
+                    "invite_candidate",
+                    f"{candidate['telegram_user_id']}: Kullanıcı hedef gruba doğrudan eklendi",
+                    current_session_id,
+                    job_id,
                 )
             if status in {"existing", "skipped", "failed"}:
                 add_log(
@@ -846,18 +1268,33 @@ async def execute_invite_job(job_id: int) -> None:
                     current_session_id,
                     job_id,
                 )
+            if pause_for_batch:
+                add_log("info", "batch_wait", batch_message, current_session_id, job_id)
+                add_notification("info", "Parti beklemesi başladı", batch_message, "jobs")
+                return
             
-            if candidate_index < len(candidates) - 1:
-                await asyncio.sleep(random.uniform(job["min_delay_seconds"], job["max_delay_seconds"]))
-
         now = utc_now()
         with get_connection() as connection:
             connection.execute(
                 "UPDATE transfer_jobs SET status='completed', execution_finished_at=?, updated_at=? WHERE id=?",
                 (now, now, job_id),
             )
-        add_log("success", "invite", "Seçili üyelerin davet işlemi tamamlandı", current_session_id, job_id)
-        add_notification("success", "Davet işi tamamlandı", job["name"], "jobs")
+        add_log("success", "invite", "Seçili üyeleri hedef gruba ekleme işlemi tamamlandı", current_session_id, job_id)
+        add_notification("success", "Üye ekleme işi tamamlandı", job["name"], "jobs")
+    except ProxyUnavailableError as error:
+        message = str(error)
+        with get_connection() as connection:
+            connection.execute(
+                "UPDATE transfer_jobs SET status='proxy_error', last_error=?, updated_at=? WHERE id=?",
+                (message, utc_now(), job_id),
+            )
+        add_log("error", "proxy", message, current_session_id, job_id)
+        add_notification(
+            "error",
+            "Üye ekleme proxy nedeniyle durduruldu",
+            f"Adaylar korunmuştur. {message}",
+            "settings",
+        )
     except Exception as error:
         message = str(error)
         with get_connection() as connection:
@@ -866,9 +1303,10 @@ async def execute_invite_job(job_id: int) -> None:
                 (message, utc_now(), utc_now(), job_id),
             )
         add_log("error", "invite", message, current_session_id, job_id)
-        add_notification("error", "Davet işi durduruldu", message, "jobs")
+        add_notification("error", "Üye ekleme işi durduruldu", message, "jobs")
     finally:
-        await client.disconnect()
+        if client is not None:
+            await client.disconnect()
 
 
 async def scan_group_activity(scan: dict) -> dict:
@@ -880,8 +1318,9 @@ async def scan_group_activity(scan: dict) -> dict:
     client = None
     selected_session_id = None
     entity = None
-    last_access_error: Exception | None = None
+    access_errors: list[tuple[int, Exception]] = []
     for session_id in session_ids:
+        candidate_client = None
         try:
             candidate_client = await _client_for(session_id)
             candidate_entity = await _resolve_or_request_group_access(
@@ -892,20 +1331,25 @@ async def scan_group_activity(scan: dict) -> dict:
             client = candidate_client
             entity = candidate_entity
             selected_session_id = session_id
+            if requested_session_id is None:
+                set_app_setting("activity_round_robin_cursor", str(session_id))
             break
         except GroupJoinPending:
             if candidate_client is not None:
                 await candidate_client.disconnect()
             raise
         except FloodWaitError:
+            if candidate_client is not None:
+                await candidate_client.disconnect()
             raise
         except Exception as error:
-            last_access_error = error
+            if candidate_client is not None:
+                await candidate_client.disconnect()
+            access_errors.append((session_id, error))
             continue
     if client is None or entity is None or selected_session_id is None:
-        raise RuntimeError(
-            "Hiçbir aktif session seçilen gruba erişemedi. Özel grup için t.me/+... davet bağlantısını kullanın."
-        ) from last_access_error
+        access_error = _activity_access_error(requested_session_id, access_errors)
+        raise access_error from (access_errors[-1][1] if access_errors else None)
 
     cutoff = datetime.now(UTC) - timedelta(hours=scan["window_hours"])
     authors: dict[int, dict] = {}
@@ -936,6 +1380,8 @@ async def scan_group_activity(scan: dict) -> dict:
                 "telegram_user_id": sender_id,
                 "display_name": display_name,
                 "username": sender.username,
+                "access_hash": getattr(sender, "access_hash", None),
+                "source_message_id": message.id,
                 "message_count": 1,
                 "last_message_at": message_date,
             }

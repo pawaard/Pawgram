@@ -40,6 +40,11 @@ class ProxySettingsRequest(BaseModel):
         return value.strip() if value else None
 
 
+class ProxyBulkImportRequest(BaseModel):
+    content: str = Field(min_length=1, max_length=2_000_000)
+    default_proxy_type: str = Field(default="socks5", pattern=r"^(socks5|http)$")
+
+
 class AdminPasswordRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
 
@@ -60,14 +65,27 @@ class ActivityScanRequest(BaseModel):
         return value
 
 
+class ActivityTransferRequest(BaseModel):
+    target_ref: str = Field(min_length=2, max_length=256)
+    max_users: int = Field(default=100, ge=1, le=1000)
+    min_delay_seconds: int = Field(default=0, ge=0, le=3600)
+    max_delay_seconds: int = Field(default=0, ge=0, le=7200)
+    daily_limit: int = Field(default=50, ge=1, le=1000)
+
+    @field_validator("target_ref")
+    @classmethod
+    def normalize_target_ref(cls, value: str) -> str:
+        return value.strip()
+
+
 class JobCreateRequest(BaseModel):
     name: str = Field(min_length=2, max_length=100)
     session_id: int
     source_ref: str = Field(min_length=2, max_length=256)
     target_ref: str = Field(min_length=2, max_length=256)
     max_users: int = Field(default=25, ge=1, le=1000)
-    min_delay_seconds: int = Field(default=45, ge=10, le=3600)
-    max_delay_seconds: int = Field(default=90, ge=10, le=7200)
+    min_delay_seconds: int = Field(default=0, ge=0, le=3600)
+    max_delay_seconds: int = Field(default=0, ge=0, le=7200)
     daily_limit: int = Field(default=50, ge=1, le=1000)
     dry_run: bool = True
     scheduled_at: str | None = Field(default=None, max_length=40)

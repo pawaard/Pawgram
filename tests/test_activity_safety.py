@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 from app.config import get_settings
 
@@ -65,13 +66,67 @@ class ActivitySafetyTests(unittest.TestCase):
 
         self.assertEqual(_activity_session_candidates(None), [ready_id])
 
-    def test_round_robin_advances_before_each_new_operation(self):
+    def test_automatic_selection_returns_all_sessions_in_round_robin_order(self):
+        from app.database import set_app_setting
         from app.telegram_service import _activity_session_candidates
 
         first_id = self._add_session("Birinci")
         second_id = self._add_session("İkinci")
-        self.assertEqual(_activity_session_candidates(None), [first_id])
-        self.assertEqual(_activity_session_candidates(None), [second_id])
+        self.assertEqual(_activity_session_candidates(None), [first_id, second_id])
+        set_app_setting("activity_round_robin_cursor", str(first_id))
+        self.assertEqual(_activity_session_candidates(None), [second_id, first_id])
+
+    def test_access_error_keeps_the_real_telegram_error(self):
+        from app.telegram_service import _activity_access_error
+
+        error = _activity_access_error(None, [(7, RuntimeError("Proxy bağlantısı kurulamadı"))])
+
+        self.assertIn("session 7", str(error))
+        self.assertIn("Proxy bağlantısı kurulamadı", str(error))
+
+    def test_automatic_scan_tries_the_next_session_after_access_error(self):
+        from app.database import get_app_setting
+        from app.telegram_service import scan_group_activity
+
+        first_id = self._add_session("Birinci")
+        second_id = self._add_session("İkinci")
+
+        class FakeClient:
+            def __init__(self):
+                self.disconnect = AsyncMock()
+
+            async def iter_messages(self, entity, limit):
+                if False:
+                    yield entity
+
+        first_client = FakeClient()
+        second_client = FakeClient()
+        entity = type("Group", (), {"id": 123, "title": "Test grubu"})()
+
+        async def client_for(session_id):
+            return first_client if session_id == first_id else second_client
+
+        async def resolve(client, session_id, reference):
+            if session_id == first_id:
+                raise RuntimeError("İlk session erişemedi")
+            return entity
+
+        scan = {
+            "session_id": None,
+            "group_ref": "@testgrubu",
+            "window_hours": 24,
+        }
+        with (
+            patch("app.telegram_service._client_for", side_effect=client_for),
+            patch("app.telegram_service._resolve_or_request_group_access", side_effect=resolve),
+            patch("app.telegram_service._record_activity_operation"),
+        ):
+            result = __import__("asyncio").run(scan_group_activity(scan))
+
+        self.assertEqual(result["session_id"], second_id)
+        first_client.disconnect.assert_awaited_once()
+        second_client.disconnect.assert_awaited_once()
+        self.assertEqual(get_app_setting("activity_round_robin_cursor"), str(second_id))
 
     def test_all_sessions_at_fixed_quota_wait_safely(self):
         from app.database import get_connection, set_app_setting, utc_now

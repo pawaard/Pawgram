@@ -1,4 +1,4 @@
-const state = { sessions: [], jobs: [], activityScans: [], health: null, license: null, telegramSettings: null, rotationSettings: null, onboarding: null, currentJobId: null, loginPhone: "" };
+const state = { sessions: [], jobs: [], activityScans: [], health: null, license: null, telegramSettings: null, rotationSettings: null, onboarding: null, currentJobId: null, currentActivityScanId: null, runningScanIds: new Set(), loginPhone: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -20,7 +20,7 @@ function escapeHtml(value = "") {
 }
 
 function badge(status) {
-  const labels = { active:"Aktif", flood_wait:"FloodWait", ready:"Hazır", preview:"Önizleme", previewed:"Önizlendi", approved:"Onaylandı", running:"Çalışıyor", completed:"Tamamlandı", failed:"Hatalı", group:"Grup", channel:"Kanal", success:"Uygun", warning:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı", queued:"Sırada", scheduled:"Planlandı", waiting:"FloodWait", waiting_join:"Katılım onayı", waiting_budget:"Güvenli bütçe", paused:"Duraklatıldı", error:"Hatalı" };
+  const labels = { active:"Aktif", flood_wait:"24 saat dinleniyor", batch_wait:"Parti beklemesi", paused_batch:"Parti beklemesi", proxy_pending:"Proxy test edilecek", proxy_error:"Proxy hatası", ready:"Hazır", preview:"Önizleme", previewed:"Önizlendi", approved:"Onaylandı", queued_execution:"Başlatılıyor", running:"Çalışıyor", completed:"Tamamlandı", failed:"Hatalı", group:"Grup", channel:"Kanal", success:"Uygun", warning:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı", queued:"Sırada", scheduled:"Planlandı", waiting:"FloodWait", waiting_join:"Katılım onayı", waiting_budget:"Güvenli bütçe", paused:"Duraklatıldı", error:"Hatalı" };
   return `<span class="badge ${escapeHtml(status)}">${labels[status] || escapeHtml(status)}</span>`;
 }
 
@@ -57,6 +57,7 @@ const pageMeta = {
 };
 
 function navigate(page) {
+  closeModals();
   $$(".page").forEach(item => item.classList.toggle("active", item.id === `page-${page}`));
   $$(".nav-item").forEach(item => item.classList.toggle("active", item.dataset.page === page));
   $("#page-title").textContent = pageMeta[page][0];
@@ -141,11 +142,11 @@ async function loadSessions() {
   const counts = status => state.sessions.filter(item => status.includes(item.status)).length;
   $("#session-total").textContent = state.sessions.length;
   $("#session-active").textContent = counts(["active"]);
-  $("#session-wait").textContent = counts(["flood_wait"]);
-  $("#session-error").textContent = counts(["error", "invalid", "banned"]);
+  $("#session-wait").textContent = counts(["flood_wait", "batch_wait"]);
+  $("#session-error").textContent = counts(["error", "invalid", "banned", "proxy_error"]);
   $("#session-table").innerHTML = state.sessions.length ? `
-    <table><thead><tr><th>#</th><th>Etiket</th><th>Numara</th><th>Hesap</th><th>Durum</th><th>Proxy</th><th>Sağlık</th><th>FloodWait</th></tr></thead><tbody>
-      ${state.sessions.map(s => `<tr><td class="mono">#${s.id}</td><td>${escapeHtml(s.label)}</td><td class="mono">${escapeHtml(s.phone_masked)}</td><td>${escapeHtml(s.display_name || "—")} ${s.username ? `<span class="mono">@${escapeHtml(s.username)}</span>` : ""}</td><td>${badge(s.status)}</td><td>${s.proxy_enabled ? `<span class="badge ${s.proxy_last_status === "failed" ? "error" : "active"}">${escapeHtml((s.proxy_type || "proxy").toUpperCase())}</span><small class="mono">${escapeHtml(s.proxy_host || "—")}:${s.proxy_port || "—"}${s.proxy_latency_ms ? ` · ${s.proxy_latency_ms} ms` : ""}</small>` : `<span class="badge">Kapalı</span>`}</td><td><div class="health"><div class="health-bar"><i style="width:${s.health_score}%"></i></div><small>${s.health_score}/100</small></div></td><td class="mono">${s.flood_wait_seconds ? `<span class="countdown" data-seconds="${s.flood_wait_seconds}">${formatDuration(s.flood_wait_seconds)}</span>` : "—"}</td></tr>`).join("")}
+    <table><thead><tr><th>#</th><th>Etiket</th><th>Numara</th><th>Hesap</th><th>Durum</th><th>Proxy</th><th>Sağlık</th><th>Bekleme</th></tr></thead><tbody>
+      ${state.sessions.map(s => `<tr><td class="mono">#${s.id}</td><td>${escapeHtml(s.label)}</td><td class="mono">${escapeHtml(s.phone_masked)}</td><td>${escapeHtml(s.display_name || "—")} ${s.username ? `<span class="mono">@${escapeHtml(s.username)}</span>` : ""}</td><td>${badge(s.status)}</td><td>${s.proxy_enabled ? `<span class="badge ${s.proxy_last_status === "failed" ? "error" : "active"}">${escapeHtml((s.proxy_type || "proxy").toUpperCase())}</span><small class="mono">${escapeHtml(s.proxy_host || "—")}:${s.proxy_port || "—"}${s.proxy_latency_ms ? ` · ${s.proxy_latency_ms} ms` : ""}</small>` : `<span class="badge error">Zorunlu</span>`}</td><td><div class="health" title="${escapeHtml(s.health_label || "")}"><div class="health-bar"><i style="width:${s.health_score}%"></i></div><small>${escapeHtml(s.health_label || `${s.health_score}/100`)}</small></div></td><td class="mono">${s.flood_wait_seconds ? `<span class="countdown" data-seconds="${s.flood_wait_seconds}">${formatDuration(s.flood_wait_seconds)}</span>` : s.batch_cooldown_seconds ? `<span class="countdown" data-seconds="${s.batch_cooldown_seconds}">${formatDuration(s.batch_cooldown_seconds)}</span>` : "—"}</td></tr>`).join("")}
     </tbody></table>` : emptyTable("Henüz telefon eklenmedi", "Numara ekle düğmesiyle ilk Telegram hesabınızı bağlayın.");
 }
 
@@ -249,7 +250,7 @@ async function loadActivityScans() {
         <td><strong>${scan.unique_users || 0}</strong> kullanıcı<br><small>${scan.message_count || 0} mesaj</small></td>
         <td><div class="activity-status ${escapeHtml(scan.status)}"><i></i>${badge(scan.status)}</div>${scan.last_error ? `<small class="red">${escapeHtml(scan.last_error)}</small>` : ""}</td>
         <td>${scan.next_run_at ? new Date(scan.next_run_at).toLocaleString("tr-TR") : "—"}</td>
-        <td><div class="job-actions"><button class="mini-button" data-activity-run="${scan.id}">Çalıştır</button>${scan.status === "paused" ? `<button class="mini-button" data-activity-resume="${scan.id}">Devam</button>` : `<button class="mini-button" data-activity-pause="${scan.id}">Duraklat</button>`}${scan.last_run_at ? `<button class="mini-button" data-activity-results="${scan.id}">Sonuçlar</button><a class="mini-button button-link" href="/api/activity-scans/${scan.id}/report.csv">CSV</a>` : ""}</div></td>
+        <td><div class="job-actions"><button class="mini-button ${state.runningScanIds.has(scan.id) || ["queued","running"].includes(scan.status) ? "is-loading" : ""}" data-activity-run="${scan.id}" ${state.runningScanIds.has(scan.id) || ["queued","running"].includes(scan.status) ? "disabled" : ""}>${state.runningScanIds.has(scan.id) || ["queued","running"].includes(scan.status) ? "Analiz ediliyor" : "Çalıştır"}</button>${scan.status === "paused" ? `<button class="mini-button" data-activity-resume="${scan.id}">Devam</button>` : `<button class="mini-button" data-activity-pause="${scan.id}">Duraklat</button>`}${scan.last_run_at ? `<button class="mini-button" data-activity-results="${scan.id}">Sonuçlar</button><a class="mini-button button-link" href="/api/activity-scans/${scan.id}/report.csv">CSV</a>` : ""}</div></td>
       </tr>`).join("")}
     </tbody></table>` : emptyTable("Henüz aktivite taraması yok", "Bir grup ve zaman aralığı seçerek ilk taramayı başlatın.");
 }
@@ -268,24 +269,64 @@ async function createActivityScan() {
       interval_minutes:Number($("#activity-interval").value),
     };
     const result = await api("/api/activity-scans", {method:"POST", body:JSON.stringify(payload)});
-    toast(`SCAN-${String(result.scan_id).padStart(4,"0")} otomatik kuyruğa eklendi.`);
+    state.runningScanIds.add(result.scan_id);
+    button.classList.add("is-loading");
+    button.textContent = "Grup analiz ediliyor";
+    toast(`SCAN-${String(result.scan_id).padStart(4,"0")} çalıştırıldı.`);
     await Promise.all([loadActivityScans(), loadNotifications()]);
+    await waitForActivityScan(result.scan_id, button);
   } catch (error) { toast(error.message); }
-  finally { button.disabled = false; button.textContent = "Taramayı başlat"; }
+  finally { button.disabled = false; button.classList.remove("is-loading"); button.textContent = "Taramayı başlat"; }
 }
 
-async function activityAction(scanId, action) {
+const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+
+async function waitForActivityScan(scanId, button = null) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    const data = await api(`/api/activity-scans/${scanId}/results`);
+    const scan = data.scan;
+    if (button) button.textContent = scan.status === "running" ? "Mesajlar analiz ediliyor" : "Tarama başlatılıyor";
+    if (["completed", "scheduled"].includes(scan.status)) {
+      state.runningScanIds.delete(Number(scanId));
+      await Promise.all([loadActivityScans(), loadNotifications()]);
+      await openActivityResults(scanId);
+      return scan;
+    }
+    if (["error", "paused", "waiting", "waiting_join", "waiting_budget"].includes(scan.status)) {
+      state.runningScanIds.delete(Number(scanId));
+      await loadActivityScans();
+      throw new Error(scan.last_error || `Tarama ${badge(scan.status).replace(/<[^>]+>/g, "")} durumunda bekliyor.`);
+    }
+    if (attempt % 2 === 0) await loadActivityScans();
+    await delay(1000);
+  }
+  state.runningScanIds.delete(Number(scanId));
+  throw new Error("Tarama beklenenden uzun sürdü. Durumu Aktivite tablosundan takip edin.");
+}
+
+async function activityAction(scanId, action, button = null) {
   try {
     await api(`/api/activity-scans/${scanId}/${action}`, {method:"POST"});
-    toast(action === "pause" ? "Tarama duraklatıldı." : action === "resume" ? "Tarama yeniden kuyruğa alındı." : "Tarama kuyruğa alındı.");
-    await loadActivityScans();
+    if (action === "run" || action === "resume") {
+      state.runningScanIds.add(Number(scanId));
+      if (button) { button.disabled = true; button.classList.add("is-loading"); button.textContent = "Analiz ediliyor"; }
+      toast("Tarama doğrudan çalıştırıldı.");
+      await loadActivityScans();
+      await waitForActivityScan(scanId, button);
+    } else {
+      state.runningScanIds.delete(Number(scanId));
+      toast("Tarama duraklatıldı.");
+      await loadActivityScans();
+    }
   } catch (error) { toast(error.message); }
+  finally { if (button) { button.disabled = false; button.classList.remove("is-loading"); } }
 }
 
 async function openActivityResults(scanId) {
   try {
     const data = await api(`/api/activity-scans/${scanId}/results`);
     const scan = data.scan;
+    state.currentActivityScanId = Number(scanId);
     $("#activity-results-name").textContent = `${scan.name} · ${activityWindowLabel(scan.window_hours)} · ${scan.group_title || scan.group_ref}`;
     $("#activity-results-csv").href = `/api/activity-scans/${scanId}/report.csv`;
     $("#activity-results-summary").innerHTML = [
@@ -298,8 +339,54 @@ async function openActivityResults(scanId) {
       <table><thead><tr><th>Kullanıcı</th><th>Telegram ID</th><th>Kullanıcı adı</th><th>Mesaj</th><th>Son mesaj</th></tr></thead><tbody>
       ${data.items.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="mono">${item.telegram_user_id}</td><td class="mono">${item.username ? "@"+escapeHtml(item.username) : "—"}</td><td>${item.message_count}</td><td>${new Date(item.last_message_at).toLocaleString("tr-TR")}</td></tr>`).join("")}
       </tbody></table>` : emptyTable("Sonuç bulunamadı", "Seçilen zaman aralığında mesaj atan uygun kullanıcı yok.");
+    $("#open-activity-transfer").disabled = !data.items.length || !["completed", "scheduled"].includes(scan.status);
+    $("#activity-transfer-source").textContent = `${scan.group_title || scan.group_ref} grubunda ${scan.unique_users || 0} aktif kullanıcı bulundu.`;
+    $("#activity-transfer-max").value = Math.min(Math.max(Number(scan.unique_users) || 100, 1), 1000);
     openModal("#activity-results-modal");
   } catch (error) { toast(error.message); }
+}
+
+function openActivityTransfer() {
+  if (!state.currentActivityScanId) return toast("Önce tamamlanmış bir tarama sonucu açın.");
+  $("#activity-transfer-target").value = "";
+  $("#activity-transfer-message").classList.add("hidden");
+  openModal("#activity-transfer-modal");
+  setTimeout(() => $("#activity-transfer-target").focus(), 50);
+}
+
+async function prepareActivityTransfer() {
+  if (!state.currentActivityScanId) return;
+  const button = $("#prepare-activity-transfer");
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = "Grup doğrulanıyor ve adaylar hazırlanıyor";
+  showMessage("#activity-transfer-message", "Hedef grup bulunuyor, aktif üyeler uygunluk kontrolünden geçiriliyor…");
+  try {
+    const payload = {
+      target_ref: $("#activity-transfer-target").value.trim(),
+      max_users: Number($("#activity-transfer-max").value),
+      daily_limit: Number($("#activity-transfer-daily").value),
+      min_delay_seconds: Number($("#activity-transfer-min-delay").value),
+      max_delay_seconds: Number($("#activity-transfer-max-delay").value),
+    };
+    const result = await api(`/api/activity-scans/${state.currentActivityScanId}/prepare-transfer`, {method:"POST", body:JSON.stringify(payload)});
+    await loadJobs();
+    $("#activity-transfer-modal").classList.add("hidden");
+    $("#activity-results-modal").classList.add("hidden");
+    await openCandidateResults(result.job_id, result.summary);
+    if (result.selected_count > 0 && result.summary?.permissions?.can_invite_users) {
+      showMessage("#candidate-message", `${result.selected_count} uygun aday hazırlandı. Seçimi kontrol edip “Seçimi onayla” düğmesine basın.`, true);
+    } else {
+      showMessage("#candidate-message", result.selected_count ? "Hedef grupta üye ekleme yetkisi bulunamadı." : "Geçerli Telegram kullanıcı referansı olan uygun üye bulunamadı. Önizlemeyi yeniden çalıştırın.");
+    }
+    await loadNotifications();
+  } catch (error) {
+    showMessage("#activity-transfer-message", error.message);
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    button.textContent = "Grubu bul ve adayları hazırla";
+  }
 }
 
 function openModal(selector) { $(selector).classList.remove("hidden"); }
@@ -415,7 +502,7 @@ function setProxyStatus(message, kind = "") {
 
 async function loadProxySettings() {
   const sessionId = Number($("#proxy-session").value);
-  const controls = ["#proxy-enabled", "#proxy-type", "#proxy-host", "#proxy-port", "#proxy-username", "#proxy-password", "#save-proxy-settings", "#test-proxy"];
+  const controls = ["#proxy-enabled", "#proxy-type", "#proxy-host", "#proxy-port", "#proxy-username", "#proxy-password", "#save-proxy-settings", "#test-proxy", "#delete-proxy"];
   controls.forEach(selector => $(selector).disabled = !sessionId);
   if (!sessionId) {
     setProxyStatus("Proxy yapılandırmak için önce bir Telegram hesabı ekleyin.");
@@ -432,7 +519,7 @@ async function loadProxySettings() {
     $("#proxy-password").placeholder = config.password_configured ? "Mevcut parola kayıtlı" : "Proxy parolası";
     if (config.last_status === "success") setProxyStatus(`Son test başarılı · ${config.latency_ms} ms`, "success");
     else if (config.last_status === "failed") setProxyStatus(`Son test başarısız · ${config.last_error || "Bağlantı kurulamadı"}`, "error");
-    else setProxyStatus(config.enabled ? "Proxy etkin; bağlantı testi önerilir." : "Bu session doğrudan bağlantı kullanıyor.");
+    else setProxyStatus(config.enabled ? "Proxy etkin; hesap işe başlamadan önce otomatik test edilecek." : "Proxy kapalı: bu session güvenlik gereği çalıştırılmaz.", config.enabled ? "" : "error");
   } catch (error) { setProxyStatus(error.message, "error"); }
 }
 
@@ -456,16 +543,89 @@ async function saveProxySettings(showSuccess = true) {
 
 async function testProxyConnection() {
   const button = $("#test-proxy");
+  const saveButton = $("#save-proxy-settings");
+  const originalText = button.textContent;
   button.disabled = true;
+  saveButton.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = "Test ediliyor";
   setProxyStatus("Proxy üzerinden Telegram bağlantısı test ediliyor…");
   try {
     const sessionId = await saveProxySettings(false);
     if (!$("#proxy-enabled").checked) throw new Error("Test için önce proxy kullanımını etkinleştirin.");
-    const result = await api(`/api/sessions/${sessionId}/proxy/test`, {method:"POST"});
-    setProxyStatus(`Bağlantı başarılı · ${result.latency_ms} ms`, "success");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 22000);
+    let result;
+    try {
+      result = await api(`/api/sessions/${sessionId}/proxy/test`, {method:"POST", signal:controller.signal});
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("Proxy testi 22 saniyede yanıt vermedi. Host, port, kullanıcı/parola ve proxy paketini kontrol edin.");
+      throw error;
+    } finally { clearTimeout(timeout); }
+    $("#proxy-type").value = result.proxy_type || $("#proxy-type").value;
+    const detected = result.auto_detected ? ` · ${result.proxy_type.toUpperCase()} otomatik algılandı` : ` · ${result.proxy_type.toUpperCase()}`;
+    setProxyStatus(`Bağlantı başarılı · ${result.latency_ms} ms${detected}`, "success");
     await loadSessions();
   } catch (error) { setProxyStatus(error.message, "error"); }
+  finally {
+    button.disabled = false;
+    saveButton.disabled = false;
+    button.classList.remove("is-loading");
+    button.textContent = originalText;
+  }
+}
+
+async function deleteProxySettings() {
+  const sessionId = Number($("#proxy-session").value);
+  if (!sessionId) return setProxyStatus("Bir Telegram session seçin.", "error");
+  if (!window.confirm("Bu hesaba kayıtlı proxy adresi ve şifreli kullanıcı/parola tamamen silinsin mi? Hesap yeni proxy eklenene kadar çalıştırılmayacak.")) return;
+  const button = $("#delete-proxy");
+  button.disabled = true;
+  try {
+    const result = await api(`/api/sessions/${sessionId}/proxy`, {method:"DELETE"});
+    await loadSessions();
+    await loadProxySettings();
+    setProxyStatus(result.message, "success");
+  } catch (error) { setProxyStatus(error.message, "error"); }
   finally { button.disabled = false; }
+}
+
+function setBulkProxyStatus(message, kind = "") {
+  const element = $("#bulk-proxy-status");
+  element.textContent = message;
+  element.classList.remove("success", "error");
+  if (kind) element.classList.add(kind);
+}
+
+async function bulkAssignProxies() {
+  const file = $("#bulk-proxy-file").files[0];
+  if (!file) return setBulkProxyStatus("Önce proxy listesini içeren bir TXT dosyası seçin.", "error");
+  const button = $("#bulk-assign-proxies");
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = "Proxyler dağıtılıyor";
+  setBulkProxyStatus("TXT okunuyor ve proxy bilgisi boş hesaplara dağıtılıyor…");
+  try {
+    const content = await file.text();
+    const result = await api("/api/proxies/bulk-assign", {
+      method:"POST",
+      body:JSON.stringify({content, default_proxy_type:$("#bulk-proxy-type").value}),
+    });
+    const invalid = result.invalid_lines?.length || 0;
+    const detail = invalid ? ` Geçersiz ${invalid} satır atlandı.` : "";
+    setBulkProxyStatus(
+      `${result.assigned_count} hesaba sabit proxy atandı. ${result.unused_proxy_count} proxy kullanılmadı, ${result.unassigned_session_count} hesap boş kaldı.${detail}`,
+      "success",
+    );
+    await loadSessions();
+    await loadProxySettings();
+    await loadNotifications();
+  } catch (error) { setBulkProxyStatus(error.message, "error"); }
+  finally {
+    button.disabled = false;
+    button.classList.remove("is-loading");
+    button.textContent = "Toplu Proxy Ekle";
+  }
 }
 
 async function loadNotifications() {
@@ -505,10 +665,6 @@ async function createBackup() {
   finally { button.disabled = false; button.textContent = "＋ Yeni yedek oluştur"; }
 }
 
-function candidateStatusLabel(status) {
-  return {eligible:"Uygun", existing:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı"}[status] || status;
-}
-
 async function previewJob(jobId) {
   toast("Telegram üyeleri güvenli önizleme için analiz ediliyor…");
   try {
@@ -519,71 +675,38 @@ async function previewJob(jobId) {
   } catch (error) { toast(error.message); }
 }
 
-async function openCandidateResults(jobId, previewSummary = null) {
-  const data = await api(`/api/jobs/${jobId}/candidates`);
-  const job = state.jobs.find(item => item.id === Number(jobId));
-  state.currentJobId = Number(jobId);
-  $("#candidate-job-name").textContent = job ? `${job.name} · JOB-${String(job.id).padStart(4,"0")}` : `JOB-${jobId}`;
-  $("#candidate-csv").href = `/api/jobs/${jobId}/report.csv`;
-  const counts = data.counts || {};
-  const scanned = data.items.length;
-  const summaryItems = [
-    ["Taranan", scanned, "blue"], ["Uygun", counts.eligible || 0, "green"],
-    ["Zaten grupta", counts.existing || 0, "yellow"], ["Bot", counts.bot || 0, ""],
-    ["Yönetici", counts.admin || 0, "yellow"], ["Daha önce alındı", counts.previously_used || 0, "yellow"],
-    ["Silinmiş", counts.deleted || 0, "red"],
-  ];
-  $("#candidate-summary").innerHTML = summaryItems.map(item => `<article><small>${item[0]}</small><strong class="${item[2]}">${item[1]}</strong></article>`).join("");
-  const permissionNote = previewSummary ? `<div class="validation-result ${previewSummary.permissions.can_invite_users ? "" : "error"}">${previewSummary.permissions.can_invite_users ? "Gönderilecek grupta kullanıcı davet etme yetkisi doğrulandı." : "Gönderilecek grupta kullanıcı davet etme yetkisi görünmüyor. Önizleme kullanılabilir fakat işlem başlatılamaz."}</div>` : "";
-  $("#candidate-table").innerHTML = permissionNote + (data.items.length ? `
-    <table><thead><tr><th>Kullanıcı</th><th>Telegram ID</th><th>Kullanıcı adı</th><th>Durum</th><th>Neden</th></tr></thead><tbody>
-    ${data.items.map(item => `<tr><td>${escapeHtml(item.display_name)}</td><td class="mono">${item.telegram_user_id}</td><td class="mono">${item.username ? "@"+escapeHtml(item.username) : "—"}</td><td>${badge(item.status === "eligible" ? "success" : item.status === "existing" ? "warning" : item.status)}</td><td>${escapeHtml(item.reason || candidateStatusLabel(item.status))}</td></tr>`).join("")}
-    </tbody></table>` : emptyTable("Aday bulunamadı", "Grup erişimini ve filtreleri kontrol edin."));
-  $("#approve-job").disabled = !counts.eligible || job?.status === "approved";
-  $("#approve-job").textContent = job?.status === "approved" ? "Onaylandı" : "Önizlemeyi onayla";
-  openModal("#candidate-modal");
-}
-
-async function approveCurrentJob() {
-  if (!state.currentJobId) return;
-  showMessage("#candidate-message", "Yönetici onayı kaydediliyor…");
-  try {
-    await api(`/api/jobs/${state.currentJobId}/approve`, {method:"POST"});
-    showMessage("#candidate-message", "İş yönetici tarafından onaylandı.", true);
-    $("#approve-job").disabled = true;
-    $("#approve-job").textContent = "Onaylandı";
-    await Promise.all([loadJobs(), loadNotifications()]);
-  } catch (error) { showMessage("#candidate-message", error.message); }
-}
-
 function candidateStatusLabel(status) {
-  return {eligible:"Uygun", invited:"Davet edildi", skipped:"Atlandı", failed:"Başarısız", existing:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı"}[status] || status;
+  return {eligible:"Uygun", invited:"Gruba eklendi", skipped:"Atlandı", failed:"Başarısız", existing:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı"}[status] || status;
 }
 
 async function openCandidateResults(jobId, previewSummary = null) {
   const data = await api(`/api/jobs/${jobId}/candidates`);
   const job = state.jobs.find(item => item.id === Number(jobId));
   state.currentJobId = Number(jobId);
+  $("#candidate-message").classList.add("hidden");
   $("#candidate-job-name").textContent = job ? `${job.name} · JOB-${String(job.id).padStart(4,"0")}` : `JOB-${jobId}`;
   $("#candidate-csv").href = `/api/jobs/${jobId}/report.csv`;
   const counts = data.counts || {};
   const summaryItems = [
     ["Taranan", data.items.length, "blue"], ["Uygun", counts.eligible || 0, "green"],
-    ["Seçili", data.selected_count || 0, "blue"], ["Davet edildi", counts.invited || 0, "green"],
+    ["Seçili", data.selected_count || 0, "blue"], ["Gruba eklendi", counts.invited || 0, "green"],
     ["Atlandı", (counts.skipped || 0) + (counts.existing || 0), "yellow"], ["Başarısız", counts.failed || 0, "red"],
   ];
   $("#candidate-summary").innerHTML = summaryItems.map(item => `<article><small>${item[0]}</small><strong class="${item[2]}">${item[1]}</strong></article>`).join("");
-  const permissionNote = previewSummary ? `<div class="validation-result ${previewSummary.permissions.can_invite_users ? "" : "error"}">${previewSummary.permissions.can_invite_users ? "Hedef grupta kullanıcı davet etme yetkisi doğrulandı." : "Hedef grupta kullanıcı davet etme yetkisi bulunmuyor."}</div>` : "";
+  const permissionNote = previewSummary ? `<div class="validation-result ${previewSummary.permissions.can_invite_users ? "" : "error"}">${previewSummary.permissions.can_invite_users ? "Hedef grupta doğrudan üye ekleme yetkisi doğrulandı." : "Hedef grupta üye ekleme yetkisi bulunmuyor."}</div>` : "";
   $("#candidate-table").innerHTML = permissionNote + (data.items.length ? `
     <table><thead><tr><th>Seç</th><th>Kullanıcı</th><th>Telegram ID</th><th>Kullanıcı adı</th><th>Durum</th><th>Neden</th></tr></thead><tbody>
     ${data.items.map(item => `<tr class="${item.selected ? "selected" : ""}"><td>${item.status === "eligible" ? `<input class="candidate-select" type="checkbox" data-candidate-id="${item.id}" ${item.selected ? "checked" : ""}>` : "—"}</td><td>${escapeHtml(item.display_name)}</td><td class="mono">${item.telegram_user_id}</td><td class="mono">${item.username ? "@"+escapeHtml(item.username) : "—"}</td><td>${badge(item.status === "eligible" || item.status === "invited" ? "success" : item.status === "existing" || item.status === "skipped" ? "warning" : item.status)}</td><td>${escapeHtml(item.reason || candidateStatusLabel(item.status))}</td></tr>`).join("")}
     </tbody></table>` : emptyTable("Aday bulunamadı", "Grup erişimini ve filtreleri kontrol edin."));
-  const approved = ["approved", "running", "paused_quota", "flood_wait", "completed"].includes(job?.status);
+  const approved = ["approved", "queued_execution", "running", "paused_quota", "paused_batch", "proxy_error", "flood_wait", "completed"].includes(job?.status);
   $("#approve-job").disabled = !counts.eligible || approved;
   $("#approve-job").textContent = approved ? "Seçim onaylandı" : "Seçimi onayla";
   $("#select-all-eligible").classList.toggle("hidden", approved);
-  $("#execute-job").classList.toggle("hidden", !["approved", "paused_quota"].includes(job?.status));
+  const resumable = ["approved", "paused_quota", "paused_batch", "proxy_error", "flood_wait"].includes(job?.status);
+  $("#execute-job").classList.toggle("hidden", !resumable);
+  $("#execute-job").textContent = job?.status === "proxy_error" ? "Proxy düzeltildi, tekrar dene" : job?.status === "approved" ? "Üyeleri hedef gruba ekle" : "İşe devam et";
   openModal("#candidate-modal");
+  if (job?.last_error && resumable) showMessage("#candidate-message", job.last_error);
 }
 
 async function approveCurrentJob() {
@@ -594,7 +717,7 @@ async function approveCurrentJob() {
   try {
     await api(`/api/jobs/${state.currentJobId}/candidates/selection`, {method:"PUT", body:JSON.stringify({candidate_ids:candidateIds})});
     await api(`/api/jobs/${state.currentJobId}/approve`, {method:"POST"});
-    showMessage("#candidate-message", `${candidateIds.length} aday onaylandı. Davetleri başlatabilirsiniz.`, true);
+    showMessage("#candidate-message", `${candidateIds.length} aday onaylandı. Hedef gruba eklemeyi başlatabilirsiniz.`, true);
     $("#approve-job").disabled = true;
     $("#approve-job").textContent = "Seçim onaylandı";
     $("#select-all-eligible").classList.add("hidden");
@@ -605,13 +728,23 @@ async function approveCurrentJob() {
 
 async function executeCurrentJob() {
   if (!state.currentJobId) return;
-  showMessage("#candidate-message", "Davet işi başlatılıyor…");
+  const button = $("#execute-job");
+  button.disabled = true;
+  button.classList.add("is-loading");
+  button.textContent = "Üyeler ekleniyor";
+  showMessage("#candidate-message", "Hedef gruba üye ekleme işi başlatılıyor…");
   try {
     const result = await api(`/api/jobs/${state.currentJobId}/execute`, {method:"POST"});
-    showMessage("#candidate-message", `${result.selected_count} seçili aday için işlem başlatıldı.`, true);
-    $("#execute-job").classList.add("hidden");
+    const resultMessage = result.status === "completed"
+      ? `İşlem tamamlandı: ${result.succeeded || 0} kişi gruba eklendi, ${result.skipped || 0} atlandı, ${result.failed || 0} başarısız.`
+      : `${result.succeeded || 0} kişi gruba eklendi. ${result.last_error || "Kalan adaylar beklemeye alındı."}`;
+    showMessage("#candidate-message", resultMessage, result.status === "completed");
+    button.classList.add("hidden");
     await Promise.all([loadJobs(), loadNotifications()]);
+    await openCandidateResults(state.currentJobId);
+    showMessage("#candidate-message", resultMessage, result.status === "completed");
   } catch (error) { showMessage("#candidate-message", error.message); }
+  finally { button.disabled = false; button.classList.remove("is-loading"); button.textContent = "Üyeleri hedef gruba ekle"; }
 }
 
 function configureAuthOverlay(setupMode) {
@@ -694,11 +827,15 @@ $("#refresh-groups").addEventListener("click", loadGroups);
 $("#refresh-logs").addEventListener("click", loadLogs);
 $("#refresh-activity").addEventListener("click", loadActivityScans);
 $("#create-activity-scan").addEventListener("click", createActivityScan);
+$("#open-activity-transfer").addEventListener("click", openActivityTransfer);
+$("#prepare-activity-transfer").addEventListener("click", prepareActivityTransfer);
 $("#save-api-settings").addEventListener("click", saveTelegramSettings);
 $("#save-rotation-settings").addEventListener("click", saveRotationSettings);
 $("#proxy-session").addEventListener("change", loadProxySettings);
 $("#save-proxy-settings").addEventListener("click", async () => { try { await saveProxySettings(true); } catch (error) { setProxyStatus(error.message, "error"); } });
 $("#test-proxy").addEventListener("click", testProxyConnection);
+$("#delete-proxy").addEventListener("click", deleteProxySettings);
+$("#bulk-assign-proxies").addEventListener("click", bulkAssignProxies);
 $("#create-backup").addEventListener("click", createBackup);
 $("#approve-job").addEventListener("click", approveCurrentJob);
 $("#execute-job").addEventListener("click", executeCurrentJob);
@@ -720,11 +857,11 @@ document.addEventListener("click", event => {
   const resultButton = event.target.closest("[data-view-candidates]");
   if (resultButton) openCandidateResults(resultButton.dataset.viewCandidates);
   const activityRun = event.target.closest("[data-activity-run]");
-  if (activityRun) activityAction(activityRun.dataset.activityRun, "run");
+  if (activityRun) activityAction(activityRun.dataset.activityRun, "run", activityRun);
   const activityPause = event.target.closest("[data-activity-pause]");
   if (activityPause) activityAction(activityPause.dataset.activityPause, "pause");
   const activityResume = event.target.closest("[data-activity-resume]");
-  if (activityResume) activityAction(activityResume.dataset.activityResume, "resume");
+  if (activityResume) activityAction(activityResume.dataset.activityResume, "resume", activityResume);
   const activityResults = event.target.closest("[data-activity-results]");
   if (activityResults) openActivityResults(activityResults.dataset.activityResults);
 });
