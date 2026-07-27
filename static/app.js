@@ -1,4 +1,4 @@
-const state = { sessions: [], jobs: [], activityScans: [], health: null, telegramSettings: null, rotationSettings: null, onboarding: null, currentJobId: null, loginPhone: "" };
+const state = { sessions: [], jobs: [], activityScans: [], health: null, license: null, telegramSettings: null, rotationSettings: null, onboarding: null, currentJobId: null, loginPhone: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -10,6 +10,7 @@ async function api(path, options = {}) {
   });
   const body = await response.json().catch(() => ({}));
   if (response.status === 401 && !path.startsWith("/api/auth/")) configureAuthOverlay(false);
+  if (response.status === 402) showLicenseOverlay(body.detail);
   if (!response.ok) throw new Error(body.detail || "İşlem tamamlanamadı.");
   return body;
 }
@@ -63,7 +64,50 @@ function navigate(page) {
   if (page === "logs") loadLogs();
   if (page === "groups") fillSessionSelects();
   if (page === "activity") loadActivityScans();
-  if (page === "settings") Promise.all([loadBackups(), loadRotationSettings(), loadProxySettings()]);
+  if (page === "settings") Promise.all([loadBackups(), loadRotationSettings(), loadProxySettings(), loadLicenseStatus()]);
+}
+
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString("tr-TR") : "—";
+}
+
+function showLicenseOverlay(message = "Pawgram lisansı gerekli.") {
+  $("#license-overlay").classList.remove("hidden");
+  $("#license-description").textContent = message;
+}
+
+function renderLicenseStatus(status) {
+  state.license = status;
+  const label = !status.required ? "Kişisel kullanım modu" : status.valid ? "Lisans aktif" : "Lisans gerekli";
+  $("#license-state").innerHTML = `<strong>${escapeHtml(label)}</strong><small>${escapeHtml(status.message || "")}</small>`;
+  $("#license-expiry").textContent = status.license_expires_at ? `Bitiş: ${formatDateTime(status.license_expires_at)}` : "Süre sınırı uygulanmıyor";
+  $("#license-offline").textContent = status.offline ? "Çevrimdışı imzalı süre kullanılıyor" : status.required ? "Sunucu doğrulaması etkin" : "Ticari paketlerde etkinleştirilebilir";
+  $("#license-state").classList.toggle("valid", Boolean(status.valid));
+}
+
+async function loadLicenseStatus() {
+  try {
+    const status = await api("/api/license/status");
+    renderLicenseStatus(status);
+    return status;
+  } catch (error) {
+    showLicenseOverlay(error.message);
+    return {required:true, valid:false, message:error.message};
+  }
+}
+
+async function activateLicense() {
+  const licenseKey = $("#license-key").value.trim();
+  if (!licenseKey) return showMessage("#license-message", "Lisans kodunu girin.");
+  showMessage("#license-message", "Lisans güvenli sunucuda doğrulanıyor…");
+  try {
+    const status = await api("/api/license/activate", {method:"POST", body:JSON.stringify({license_key:licenseKey})});
+    renderLicenseStatus(status);
+    $("#license-key").value = "";
+    $("#license-overlay").classList.add("hidden");
+    showMessage("#license-message", "Lisans başarıyla etkinleştirildi.", true);
+    await bootstrap();
+  } catch (error) { showMessage("#license-message", error.message); }
 }
 
 function fillSessionSelects() {
@@ -614,6 +658,9 @@ async function startApp() {
 
 async function bootstrap() {
   try {
+    const license = await loadLicenseStatus();
+    if (license.required && !license.valid) return showLicenseOverlay(license.message);
+    $("#license-overlay").classList.add("hidden");
     const auth = await api("/api/auth/status");
     if (!auth.configured) return configureAuthOverlay(true);
     if (!auth.authenticated) return configureAuthOverlay(false);
@@ -661,6 +708,8 @@ $("#select-all-eligible").addEventListener("click", () => {
 $("#open-notifications").addEventListener("click", openNotifications);
 $("#close-notifications").addEventListener("click", () => $("#notification-drawer").classList.add("hidden"));
 $("#auth-submit").addEventListener("click", submitAuth);
+$("#license-activate").addEventListener("click", activateLicense);
+$("#license-key").addEventListener("keydown", event => { if (event.key === "Enter") activateLicense(); });
 $("#admin-password").addEventListener("keydown", event => { if (event.key === "Enter") submitAuth(); });
 $("#continue-onboarding").addEventListener("click", continueOnboarding);
 $("#dismiss-onboarding").addEventListener("click", () => { sessionStorage.setItem("pawgram_onboarding_dismissed", "1"); closeModals(); });
@@ -693,7 +742,7 @@ $("#resolve-single-group").addEventListener("click", async () => {
 
 bootstrap();
 setInterval(() => {
-  if (!$("#auth-overlay").classList.contains("hidden")) return;
+  if (!$("#auth-overlay").classList.contains("hidden") || !$("#license-overlay").classList.contains("hidden")) return;
   loadDashboard(); loadLogs(); loadNotifications();
   if ($("#page-activity").classList.contains("active")) loadActivityScans();
   $$(".countdown[data-seconds]").forEach(element => {

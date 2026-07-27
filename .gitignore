@@ -17,9 +17,13 @@ data/*.db-*
 data/.secret_key
 data/*.csv
 data/update.log
+data/installation_id
+license_server/.env
+license_server/data/
 .pytest_cache/
 /build/
 /dist/
+/releases/
 /Pawgram.exe
 /Pawgram.zip
 *.zip

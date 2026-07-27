@@ -1,0 +1,4 @@
+Algorithm: SHA-256
+Fingerprint: 5F03DE452ABA6219DD665CB1609B07656A3829479A4D14408750547914121F9E
+
+Bu parmak izi app/license_key.py içine gömülü public anahtarla eşleşmelidir.

@@ -6,6 +6,7 @@
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="stylesheet" href="/static/features.css">
+  <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
   <div class="app-shell">
@@ -177,6 +178,14 @@
             <p class="help-text">Bilgiler yerel veritabanında şifreli saklanır. API Hash kaydedildikten sonra tekrar açık biçimde gösterilmez.</p>
           </div>
         </div>
+        <div class="panel license-panel">
+          <div class="section-heading"><div><h2>Lisans ve cihaz aktivasyonu</h2><p>Sunucu imzalı süre ve cihaz doğrulama durumu</p></div><span class="badge active">Ed25519</span></div>
+          <div class="license-status-grid">
+            <div id="license-state" class="license-state"><strong>Kontrol ediliyor</strong><small>Lisans durumu alınıyor…</small></div>
+            <div><strong id="license-expiry">—</strong><small id="license-offline">—</small></div>
+          </div>
+          <p class="help-text">Kişisel sürümde lisans zorunlu değildir. Ticari paket etkinleştirildiğinde lisans cihazla eşleştirilir ve belirli aralıklarla güvenli sunucuda doğrulanır.</p>
+        </div>
         <div class="panel proxy-panel">
           <div class="section-heading"><div><h2>Session proxy yönetimi</h2><p>İsteğe bağlı sabit SOCKS5 veya HTTP proxy. Bir session'a atanan proxy işlem sırasında otomatik değiştirilmez.</p></div><span class="badge active">Fail-closed</span></div>
           <div class="proxy-form">
@@ -286,6 +295,18 @@
       <label id="admin-password-confirm-label" class="hidden">Parolayı tekrar girin<input id="admin-password-confirm" type="password" minlength="8" autocomplete="new-password"></label>
       <button class="primary full" id="auth-submit">Giriş yap</button>
       <div id="auth-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="auth-overlay license-overlay hidden" id="license-overlay">
+    <div class="auth-card">
+      <div class="auth-logo">◆</div>
+      <h1>Pawgram Lisansı</h1>
+      <p id="license-description">Bu ticari sürümü kullanmak için lisansınızı etkinleştirin.</p>
+      <label>Lisans kodu<input id="license-key" type="text" maxlength="64" placeholder="PAWG-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off"></label>
+      <button class="primary full" id="license-activate">Lisansı etkinleştir</button>
+      <div id="license-message" class="form-message hidden"></div>
+      <small class="license-privacy">Cihaz kimliği tek yönlü özetlenerek gönderilir; telefon numarası ve Telegram verileri lisans sunucusuna gönderilmez.</small>
     </div>
   </div>
 

@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from telethon.errors import FloodWaitError
 
 from app.database import add_log, add_notification, get_connection, utc_now
+from app.licensing import local_license_status
 from app.telegram_service import GroupJoinPending, SessionBudgetWaiting, scan_group_activity
 
 
@@ -12,6 +13,10 @@ RUNNING_SCANS: set[int] = set()
 
 
 async def execute_activity_scan(scan_id: int) -> None:
+    license_state = local_license_status()
+    if license_state["required"] and not license_state["valid"]:
+        add_log("warning", "license", "Aktivite işi geçerli lisans olmadığı için bekletildi")
+        return
     if scan_id in RUNNING_SCANS:
         return
     RUNNING_SCANS.add(scan_id)
@@ -153,6 +158,10 @@ async def execute_activity_scan(scan_id: int) -> None:
 
 async def activity_scheduler_loop() -> None:
     while True:
+        license_state = local_license_status()
+        if license_state["required"] and not license_state["valid"]:
+            await asyncio.sleep(5)
+            continue
         now = utc_now()
         with get_connection() as connection:
             scans = connection.execute(

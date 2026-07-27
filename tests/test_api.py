@@ -29,6 +29,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
+    def test_commercial_api_is_locked_without_valid_license(self):
+        invalid = {
+            "required": True,
+            "valid": False,
+            "status": "not_activated",
+            "message": "Pawgram lisansı etkinleştirilmedi.",
+        }
+        with patch("app.main.local_license_status", return_value=invalid):
+            response = self.client.get("/api/dashboard")
+        self.assertEqual(response.status_code, 402)
+        self.assertTrue(response.json()["license_required"])
+
     def test_job_creation_with_schedule(self):
         from app.database import get_connection, utc_now
 

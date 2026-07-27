@@ -13,7 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from app.config import APP_DIR, RESOURCE_DIR, get_settings
 from app.activity_service import activity_scheduler_loop, execute_activity_scan, stop_scheduler
 from app.database import add_log, add_notification, get_app_setting, get_connection, initialize_database, set_app_setting, utc_now
-from app.schemas import ActivityScanRequest, AdminPasswordRequest, CandidateSelectionRequest, GroupResolveRequest, JobCreateRequest, LoginStartRequest, LoginVerifyRequest, ProxySettingsRequest, RotationSettingsRequest, TelegramSettingsRequest
+from app.licensing import activate_license, license_refresh_loop, local_license_status, refresh_license
+from app.schemas import ActivityScanRequest, AdminPasswordRequest, CandidateSelectionRequest, GroupResolveRequest, JobCreateRequest, LicenseActivationRequest, LoginStartRequest, LoginVerifyRequest, ProxySettingsRequest, RotationSettingsRequest, TelegramSettingsRequest
 from app.security import create_auth_token, decrypt, encrypt, hash_password, verify_auth_token, verify_password
 from app.telegram_service import execute_invite_job, list_groups, preview_job_candidates, resolve_group, start_login, test_session_proxy, verify_login
 
@@ -22,14 +23,16 @@ from app.telegram_service import execute_invite_job, list_groups, preview_job_ca
 async def lifespan(_: FastAPI):
     initialize_database()
     scheduler_task = asyncio.create_task(activity_scheduler_loop())
+    license_task = asyncio.create_task(license_refresh_loop())
     try:
         yield
     finally:
         await stop_scheduler(scheduler_task)
+        await stop_scheduler(license_task)
 
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 JOB_TASKS: set[asyncio.Task] = set()
 static_dir = RESOURCE_DIR / "static"
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -39,11 +42,20 @@ PUBLIC_API_PATHS = {
     "/api/auth/status",
     "/api/auth/setup",
     "/api/auth/login",
+    "/api/license/status",
+    "/api/license/activate",
 }
 
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
+        license_state = local_license_status()
+        if license_state["required"] and not license_state["valid"]:
+            return JSONResponse(
+                status_code=402,
+                content={"detail": license_state["message"], "license_required": True},
+            )
     if request.url.path.startswith("/api/") and request.url.path not in PUBLIC_API_PATHS:
         admin_hash = get_app_setting("admin_password_hash")
         if admin_hash and not verify_auth_token(request.cookies.get("pawgram_session")):
@@ -103,7 +115,21 @@ async def health():
         "telegram_configured": settings.telegram_configured or panel_configured,
         "telegram_config_source": "environment" if settings.telegram_configured else "panel" if panel_configured else None,
         "environment": settings.app_env,
+        "license": {key: value for key, value in local_license_status().items() if key != "lease_token"},
     }
+
+
+@app.get("/api/license/status")
+async def license_status():
+    return await refresh_license()
+
+
+@app.post("/api/license/activate")
+async def license_activate(payload: LicenseActivationRequest):
+    try:
+        return await activate_license(payload.license_key)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/auth/status")

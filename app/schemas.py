@@ -82,3 +82,7 @@ class JobCreateRequest(BaseModel):
 
 class CandidateSelectionRequest(BaseModel):
     candidate_ids: list[int] = Field(default_factory=list, max_length=1000)
+
+
+class LicenseActivationRequest(BaseModel):
+    license_key: str = Field(min_length=20, max_length=64)

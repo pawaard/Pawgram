@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pawgram Lisans Yönetimi</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07101a;--panel:#0e1a28;--border:#24364b;--text:#edf5ff;--muted:#8190a4;--blue:#24b5f5;--green:#31d6a1;--red:#ef6578}*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 70% -20%,#10324a,transparent 40%),var(--bg);color:var(--text);font:14px system-ui}.shell{max-width:1100px;margin:auto;padding:32px}.head{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px}.head h1{margin:0}.head p{color:var(--muted)}.admin-auth{display:flex;gap:8px}.admin-auth input{width:260px}.panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:20px;margin-bottom:18px}.grid{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:12px;align-items:end}label{display:grid;gap:7px;color:var(--muted);font-size:12px}input,select,button{height:40px;border-radius:7px;border:1px solid var(--border);background:#091522;color:var(--text);padding:0 12px}button{cursor:pointer;background:linear-gradient(135deg,#24b5f5,#168fd0);color:#03121d;font-weight:700}.danger{background:#35151b;color:#ffbbc5}.secondary{background:#142334;color:var(--text)}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--border)}th{color:var(--muted);font-size:11px}.badge{padding:3px 8px;border-radius:20px;background:#173324;color:var(--green)}.badge.revoked{background:#35151b;color:var(--red)}.actions{display:flex;gap:6px}.actions button{height:30px;padding:0 9px;font-size:11px}.key-result{margin-top:15px;padding:15px;background:#07131e;border:1px solid #236584;border-radius:8px}.key-result code{font-size:17px;color:#78d8ff}.hidden{display:none}.error{color:#ff9aaa}@media(max-width:760px){.grid{grid-template-columns:1fr}.shell{padding:16px}.table{overflow:auto}.head{align-items:flex-start;gap:12px;flex-direction:column}.admin-auth{width:100%}.admin-auth input{width:100%}}
+  </style>
+</head>
+<body><div class="shell">
+  <div class="head"><div><h1>🐾 Pawgram Lisans Yönetimi</h1><p>Haftalık, aylık ve üç aylık cihaz bağlı lisanslar</p></div><div class="admin-auth"><input id="admin-key" type="password" placeholder="Yönetici anahtarı" autocomplete="current-password"><button class="secondary" id="set-key">Bağlan</button></div></div>
+  <div class="panel">
+    <div class="grid">
+      <label>Müşteri / not<input id="customer" placeholder="Müşteri adı"></label>
+      <label>Süre<select id="duration"><option value="7">7 gün</option><option value="30">30 gün</option><option value="90">90 gün</option><option value="365">1 yıl</option></select></label>
+      <label>Cihaz sınırı<input id="devices" type="number" min="1" max="20" value="1"></label>
+      <button id="create">Lisans oluştur</button>
+    </div>
+    <div id="result" class="key-result hidden"></div>
+  </div>
+  <div class="panel table"><table><thead><tr><th>ID</th><th>Müşteri</th><th>Kod</th><th>Durum</th><th>Bitiş</th><th>Cihaz</th><th>İşlemler</th></tr></thead><tbody id="licenses"></tbody></table></div>
+</div><script>
+const $=s=>document.querySelector(s);
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'İşlem başarısız');return d}
+async function loginAdmin(){const value=$('#admin-key').value;try{await api('/v1/admin/login',{method:'POST',body:JSON.stringify({admin_key:value})});$('#admin-key').value='';await load()}catch(e){$('#licenses').innerHTML=`<tr><td colspan="7" class="error">${esc(e.message)}</td></tr>`}}
+const date=v=>v?new Date(v).toLocaleString('tr-TR'):'İlk aktivasyonda başlar';
+async function load(){try{const rows=await api('/v1/admin/licenses');$('#licenses').innerHTML=rows.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.customer_label)}</td><td>••••-${esc(x.code_hint)}</td><td><span class="badge ${esc(x.status)}">${esc(x.status)}</span></td><td>${date(x.expires_at)}</td><td>${x.activation_count}/${x.max_devices}</td><td><div class="actions"><button class="secondary" onclick="extendLicense(${x.id})">+30 gün</button><button class="secondary" onclick="resetDevices(${x.id})">Cihaz sıfırla</button><button class="danger" onclick="revoke(${x.id})">İptal</button></div></td></tr>`).join('')||'<tr><td colspan="7">Henüz lisans yok.</td></tr>'}catch(e){$('#licenses').innerHTML=`<tr><td colspan="7" class="error">${esc(e.message)}</td></tr>`}}
+async function createLicense(){try{const d=await api('/v1/admin/licenses',{method:'POST',body:JSON.stringify({customer_label:$('#customer').value,duration_days:Number($('#duration').value),max_devices:Number($('#devices').value)})});$('#result').classList.remove('hidden');$('#result').innerHTML=`Lisans kodu: <code>${d.license_key}</code><br><small>Bu kod tekrar gösterilmeyecektir. Güvenli biçimde müşteriye iletin.</small>`;await load()}catch(e){alert(e.message)}}
+async function revoke(id){if(confirm('Bu lisans iptal edilsin mi?')){await api(`/v1/admin/licenses/${id}/revoke`,{method:'POST'});load()}}
+async function extendLicense(id){await api(`/v1/admin/licenses/${id}/extend`,{method:'POST',body:JSON.stringify({duration_days:30})});load()}
+async function resetDevices(id){if(confirm('Bu lisansın cihaz aktivasyonları sıfırlansın mı?')){await api(`/v1/admin/licenses/${id}/reset-devices`,{method:'POST'});load()}}
+$('#create').onclick=createLicense;$('#set-key').onclick=loginAdmin;$('#admin-key').onkeydown=e=>{if(e.key==='Enter')loginAdmin()};load();
+</script></body></html>

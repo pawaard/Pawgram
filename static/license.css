@@ -1,0 +1,55 @@
+.license-status-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding: 18px;
+}
+
+.license-status-grid > div {
+  border: 1px solid var(--border);
+  background: #0a1521;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.license-status-grid strong,
+.license-status-grid small {
+  display: block;
+}
+
+.license-status-grid small {
+  color: var(--muted);
+  margin-top: 5px;
+}
+
+.license-state.valid {
+  border-color: #1f6b54;
+  background: #0b241d;
+}
+
+.license-overlay {
+  z-index: 45;
+}
+
+.license-overlay .auth-logo {
+  color: #78d8ff;
+}
+
+.license-privacy {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+  margin-top: 16px;
+}
+
+.license-overlay input {
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+@media (max-width: 720px) {
+  .license-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
