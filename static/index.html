@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pawgram</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/features.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark"><span>●</span><i>●</i><b>●</b><em>●</em><strong>●</strong></div>
+        <div><strong>Pawgram</strong><small>Telegram yönetim konsolu</small></div>
+      </div>
+      <nav id="navigation">
+        <button class="nav-item active" data-page="dashboard"><span>▦</span> Panel</button>
+        <button class="nav-item" data-page="sessions"><span>♙</span> Session'lar</button>
+        <button class="nav-item" data-page="groups"><span>◫</span> Gruplarım</button>
+        <button class="nav-item" data-page="activity"><span>◉</span> Aktiflik</button>
+        <button class="nav-item" data-page="jobs"><span>☷</span> Kuyruk</button>
+        <button class="nav-item" data-page="logs"><span>▤</span> Loglar</button>
+        <button class="nav-item" data-page="settings"><span>⚙</span> Ayarlar</button>
+      </nav>
+      <div class="safety-card">
+        <span class="status-dot"></span>
+        <strong>Koruma modu açık</strong>
+        <small>FloodWait sürelerine zorunlu olarak uyulur.</small>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div><h1 id="page-title">Panel</h1><p id="page-subtitle">Telegram hesapları ve işler için genel görünüm</p></div>
+        <div class="top-actions">
+          <button class="icon-button" id="open-notifications" title="Bildirimler">♢<span id="notification-count" class="notification-count hidden">0</span></button>
+          <span class="system-pill"><i></i> Sistem çalışıyor</span>
+          <span class="session-pill" id="top-session-count">0 session</span>
+          <button class="ghost" id="logout-button">Çıkış</button>
+        </div>
+      </header>
+
+      <section class="page active" id="page-dashboard">
+        <div class="stats-grid">
+          <article class="stat-card"><small>BAĞLI HESAP</small><strong id="metric-sessions">0</strong><span>Toplam session</span></article>
+          <article class="stat-card"><small>AKTİF SESSION</small><strong id="metric-active">0</strong><span class="positive">Kullanıma hazır</span></article>
+          <article class="stat-card"><small>KUYRUKTAKİ İŞ</small><strong id="metric-jobs">0</strong><span>Hazır ve çalışan</span></article>
+          <article class="stat-card"><small>FLOODWAIT</small><strong id="metric-waiting">0</strong><span class="warning">Zorunlu beklemede</span></article>
+        </div>
+
+        <div class="panel quick-panel">
+          <div class="section-heading"><div><h2>Üye aktarım merkezi</h2><p>Çekilecek ve gönderilecek grubu belirleyerek güvenli iş akışını hazırlayın.</p></div><button class="primary" data-open-job>＋ Yeni aktarım</button></div>
+          <div class="transfer-flow">
+            <div><span>1</span><strong>Çekilecek grup</strong><small>Üyelerin analiz edileceği kaynak</small></div>
+            <i>→</i>
+            <div><span>2</span><strong>Uygunluk kontrolü</strong><small>Bot, silinmiş ve tekrar kayıtlar atlanır</small></div>
+            <i>→</i>
+            <div><span>3</span><strong>Gönderilecek grup</strong><small>Onay sonrası hedef topluluk</small></div>
+          </div>
+          <div class="quick-grid">
+            <label>Telegram hesabı<select id="quick-session"></select></label>
+            <label>Çekilecek grup ID / @kullanıcı adı<input id="quick-source" placeholder="-1001234567890 veya @kaynak"></label>
+            <label>Gönderilecek grup ID / @kullanıcı adı<input id="quick-target" placeholder="-1009876543210 veya @hedef"></label>
+            <button class="secondary align-end" id="quick-validate">Grupları doğrula</button>
+          </div>
+          <div id="quick-result" class="validation-result hidden"></div>
+        </div>
+
+        <div class="dashboard-grid">
+          <div class="panel">
+            <div class="section-heading"><div><h2>Son işler</h2><p>En son oluşturulan iş tanımları</p></div><button class="ghost" data-page-link="jobs">Tümünü gör</button></div>
+            <div id="recent-jobs" class="table-wrap"></div>
+          </div>
+          <div class="panel">
+            <div class="section-heading"><div><h2>Canlı akış</h2><p>Son sistem olayları</p></div><span class="live-dot">● Canlı</span></div>
+            <div id="live-logs" class="log-stream compact"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="page" id="page-sessions">
+        <div class="stats-grid four-small">
+          <article class="stat-card"><small>TOPLAM</small><strong id="session-total">0</strong></article>
+          <article class="stat-card"><small>AKTİF</small><strong class="green" id="session-active">0</strong></article>
+          <article class="stat-card"><small>BEKLEMEDE</small><strong class="yellow" id="session-wait">0</strong></article>
+          <article class="stat-card"><small>SORUNLU</small><strong class="red" id="session-error">0</strong></article>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>Session listesi</h2><p>Uygulama seviyesinde telefon sınırı bulunmaz.</p></div><button class="primary" id="open-session-modal">＋ Numara ekle</button></div>
+          <div id="session-table" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-groups">
+        <div class="panel">
+          <div class="section-heading"><div><h2>Gruplarım</h2><p>Bir hesabın erişebildiği grupları listeleyin veya referans doğrulayın.</p></div><button class="secondary" id="refresh-groups">↻ Grupları getir</button></div>
+          <div class="group-toolbar">
+            <label>Telegram hesabı<select id="group-session"></select></label>
+            <label>Grup ID, @kullanıcı adı veya bağlantı<input id="group-reference" placeholder="-100..., @grup veya https://t.me/..."></label>
+            <button class="primary align-end" id="resolve-single-group">Doğrula</button>
+          </div>
+          <div id="resolved-group" class="validation-result hidden"></div>
+          <div id="groups-table" class="table-wrap empty-state"><div class="empty-icon">◫</div><strong>Henüz grup yüklenmedi</strong><span>Bir session seçip “Grupları getir” düğmesine basın.</span></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-activity">
+        <div class="stats-grid four-small">
+          <article class="stat-card"><small>TOPLAM TARAMA</small><strong id="activity-total">0</strong></article>
+          <article class="stat-card"><small>ÇALIŞAN / SIRADA</small><strong class="blue" id="activity-running">0</strong></article>
+          <article class="stat-card"><small>AKTİF KULLANICI</small><strong class="green" id="activity-users">0</strong></article>
+          <article class="stat-card"><small>BEKLEMEDE</small><strong class="yellow" id="activity-waiting">0</strong></article>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>Mesaj yazarı taraması</h2><p>Hesabın erişebildiği özel veya açık gruplarda mesaj atan gerçek kullanıcıları analiz eder.</p></div></div>
+          <div class="activity-form">
+            <label>Tarama adı<input id="activity-name" placeholder="Son 24 saat aktif üyeler"></label>
+            <label>Session<select id="activity-session"></select></label>
+            <label>Grup ID / @kullanıcı adı<input id="activity-group" placeholder="-100... veya @grup"></label>
+            <label>Aktivite aralığı<select id="activity-window"><option value="24">Son 24 saat</option><option value="72">Son 3 gün</option><option value="168">Son 7 gün</option><option value="720">Son 30 gün</option></select></label>
+            <label class="check-label activity-check"><input id="activity-recurring" type="checkbox"> Otomatik tekrarla</label>
+            <label>Tekrar aralığı<select id="activity-interval"><option value="60">Her saat</option><option value="360">6 saatte bir</option><option value="720">12 saatte bir</option><option value="1440" selected>Her gün</option><option value="10080">Her hafta</option></select></label>
+            <button class="primary align-end" id="create-activity-scan">Taramayı başlat</button>
+          </div>
+          <div class="compliance-note"><strong>Güvenli otomasyon:</strong> Hesap özel grupta değilse <code>t.me/+...</code> davet bağlantısından katılım isteği gönderilir; Telegram'dan onayladığınızda tarama otomatik devam eder. Otomatik seçimde yeni işler, işlem başlamadan önce sabit günlük kotaya göre Round-Robin dağıtılır. FloodWait veya hata yönetimi sırasında session değiştirilmez.</div>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>Aktivite taramaları</h2><p>Tek seferlik ve otomatik tekrarlanan analizler</p></div><button class="secondary" id="refresh-activity">↻ Yenile</button></div>
+          <div id="activity-table" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-jobs">
+        <div class="stats-grid four-small">
+          <article class="stat-card"><small>HAZIR</small><strong id="job-ready">0</strong></article>
+          <article class="stat-card"><small>ÇALIŞAN</small><strong class="blue" id="job-running">0</strong></article>
+          <article class="stat-card"><small>TAMAMLANAN</small><strong class="green" id="job-completed">0</strong></article>
+          <article class="stat-card"><small>HATALI</small><strong class="red" id="job-failed">0</strong></article>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>İş kuyruğu</h2><p>İşler başladıkları session'a bağlı kalır; FloodWait başka hesapla aşılmaz.</p></div><button class="primary" data-open-job>＋ Yeni iş</button></div>
+          <div id="jobs-table" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-logs">
+        <div class="panel">
+          <div class="section-heading"><div><h2>Sistem logları</h2><p>Session, grup doğrulama ve kuyruk kayıtları</p></div><button class="secondary" id="refresh-logs">↻ Yenile</button></div>
+          <div id="all-logs" class="log-stream"></div>
+        </div>
+      </section>
+
+      <section class="page" id="page-settings">
+        <div class="settings-grid">
+          <div class="panel">
+            <div class="section-heading"><div><h2>Koruma kuralları</h2><p>Bu kurallar uygulamanın temel davranışıdır.</p></div></div>
+            <div class="setting-row"><div><strong>FloodWait'e zorunlu uy</strong><small>Telegram'ın bildirdiği süre bitmeden işlem yapılmaz.</small></div><span class="toggle on"></span></div>
+            <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Session değişimi yalnızca işlem başlamadan önce, sabit kota kontrolüyle yapılır. Hata veya FloodWait içinde hesap değiştirilmez.</small></div><span class="toggle on"></span></div>
+            <div class="setting-row"><div><strong>Yönetici ve geçmiş filtresi</strong><small>Kaynak grup yöneticileri ile daha önce onaylanan kullanıcılar yeni aday listelerine alınmaz.</small></div><span class="toggle on"></span></div>
+            <div class="setting-row"><div><strong>Önizleme varsayılan</strong><small>Yeni işler önce gerçek işlem yapmayan test modunda açılır.</small></div><span class="toggle on"></span></div>
+            <div class="api-form rotation-form">
+              <label>Session başına günlük aktivite işlem kotası<input id="rotation-daily-quota" type="number" min="1" max="1000" value="30"></label>
+              <button class="primary" id="save-rotation-settings">Round-Robin kotasını kaydet</button>
+              <div id="rotation-settings-message" class="form-message hidden"></div>
+            </div>
+          </div>
+          <div class="panel">
+          <div class="section-heading"><div><h2>Telegram API bağlantısı</h2><p>Dosya düzenlemeden panel üzerinden yapılandırın.</p></div></div>
+            <div id="api-config-state" class="config-state"></div>
+            <div class="api-form">
+              <label>API ID<input id="settings-api-id" inputmode="numeric" placeholder="12345678"></label>
+              <label>API Hash<input id="settings-api-hash" type="password" placeholder="32 karakterli API Hash" autocomplete="off"></label>
+              <button class="primary" id="save-api-settings">API bilgilerini kaydet</button>
+              <div id="api-settings-message" class="form-message hidden"></div>
+            </div>
+            <p class="help-text">Bilgiler yerel veritabanında şifreli saklanır. API Hash kaydedildikten sonra tekrar açık biçimde gösterilmez.</p>
+          </div>
+        </div>
+        <div class="panel proxy-panel">
+          <div class="section-heading"><div><h2>Session proxy yönetimi</h2><p>İsteğe bağlı sabit SOCKS5 veya HTTP proxy. Bir session'a atanan proxy işlem sırasında otomatik değiştirilmez.</p></div><span class="badge active">Fail-closed</span></div>
+          <div class="proxy-form">
+            <label>Telegram session<select id="proxy-session"></select></label>
+            <label class="check-label"><input id="proxy-enabled" type="checkbox"> Bu session için proxy kullan</label>
+            <label>Proxy türü<select id="proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></label>
+            <label>Sunucu / IP<input id="proxy-host" placeholder="proxy.example.com"></label>
+            <label>Port<input id="proxy-port" type="number" min="1" max="65535" placeholder="1080"></label>
+            <label>Kullanıcı adı <span>(isteğe bağlı)</span><input id="proxy-username" autocomplete="off"></label>
+            <label>Parola <span>(boş bırakılırsa mevcut parola korunur)</span><input id="proxy-password" type="password" autocomplete="new-password"></label>
+          </div>
+          <div class="proxy-actions">
+            <button class="primary" id="save-proxy-settings">Proxy ayarını kaydet</button>
+            <button class="secondary" id="test-proxy">Bağlantıyı test et</button>
+            <div id="proxy-status" class="proxy-status">Bir session seçerek proxy yapılandırabilirsiniz.</div>
+          </div>
+          <div class="compliance-note"><strong>IP sızıntısı koruması:</strong> Proxy etkinse ve bağlantı kurulamazsa işlem durur; Pawgram doğrudan internet bağlantısına geri dönmez. Proxy, kota veya FloodWait davranışını değiştirmez.</div>
+        </div>
+        <div class="panel backup-panel">
+          <div class="section-heading"><div><h2>Yedekleme ve veri güvenliği</h2><p>Veritabanının geri yüklenebilir bir kopyasını oluşturun.</p></div><button class="primary" id="create-backup">＋ Yeni yedek oluştur</button></div>
+          <div id="backup-list" class="table-wrap"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop hidden" id="session-modal">
+    <div class="modal">
+      <button class="modal-close" data-close-modal>×</button>
+      <div id="login-step-phone">
+        <h2>Telegram hesabı ekle</h2><p>Numaranıza Telegram tarafından doğrulama kodu gönderilir.</p>
+        <label>Hesap etiketi<input id="login-label" value="Ana hesap" maxlength="80"></label>
+        <label>Telefon numarası<input id="login-phone" placeholder="+905xxxxxxxxx" autocomplete="tel"></label>
+        <button class="primary full" id="request-code">Doğrulama kodu iste</button>
+      </div>
+      <div id="login-step-code" class="hidden">
+        <h2>Kodu doğrula</h2><p>Telegram uygulamanıza gelen kodu girin.</p>
+        <label>Doğrulama kodu<input id="login-code" inputmode="numeric" autocomplete="one-time-code"></label>
+        <label>2FA parolası <span>(varsa)</span><input id="login-password" type="password" autocomplete="current-password"></label>
+        <button class="primary full" id="verify-code">Hesabı bağla</button>
+      </div>
+      <div id="login-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="job-modal">
+    <div class="modal wide">
+      <button class="modal-close" data-close-modal>×</button>
+      <h2>Yeni üye aktarımı</h2><p>Çekilecek ve gönderilecek grup işlemden önce Telegram üzerinden doğrulanır.</p>
+      <div class="form-grid">
+        <label class="span-2">İş adı<input id="job-name" placeholder="Topluluk aktarım önizlemesi"></label>
+        <label>Telegram hesabı<select id="job-session"></select></label>
+        <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" max="1000" value="25"></label>
+        <label>Çekilecek grup<input id="job-source" placeholder="-100... veya @kaynak"></label>
+        <label>Gönderilecek grup<input id="job-target" placeholder="-100... veya @hedef"></label>
+        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="10" value="45"></label>
+        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="10" value="90"></label>
+        <label>Günlük koruma sınırı<input id="job-daily" type="number" min="1" value="50"></label>
+        <label class="check-label"><input id="job-dry-run" type="checkbox" checked> Test/önizleme modu</label>
+        <label>Planlanan başlangıç<input id="job-scheduled" type="datetime-local"></label>
+        <label>Çalışma başlangıcı<input id="job-working-start" type="time" value="09:00"></label>
+        <label>Çalışma bitişi<input id="job-working-end" type="time" value="22:00"></label>
+      </div>
+      <div class="notice">İlk sürüm işleri güvenli biçimde tanımlar ve doğrular. Gerçek davet çalıştırıcısı, önizleme ve açık yönetici onayından sonra etkinleştirilecektir.</div>
+      <button class="primary full" id="create-job">Doğrula ve kuyruğa ekle</button>
+      <div class="notice invite-note">Davetler yalnızca panelde seçilip onaylanan adaylar için, işin seçili session'ı ve günlük güvenli kota ile çalışır. Kota veya kritik Telegram hatasında başka session'a geçilmez.</div>
+      <div id="job-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="candidate-modal">
+    <div class="modal extra-wide">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="section-heading modal-heading"><div><h2>Aday üye önizlemesi</h2><p id="candidate-job-name">Uygunluk sonuçları</p></div><a class="secondary button-link" id="candidate-csv" href="#">CSV raporu</a></div>
+      <div id="candidate-summary" class="candidate-summary"></div>
+      <div class="candidate-tools"><button class="secondary" id="select-all-eligible">Tüm uygunları seç</button></div>
+      <div id="candidate-table" class="table-wrap candidate-table"></div>
+      <div class="approval-bar">
+        <p>Onay, yalnızca önizleme sonuçlarını kabul ettiğinizi kaydeder. Telegram limitleri ve FloodWait kuralları değişmez.</p>
+        <button class="primary" id="approve-job">Önizlemeyi onayla</button>
+      </div>
+      <div class="candidate-tools"><button class="primary hidden" id="execute-job">Davetleri başlat</button></div>
+      <div id="candidate-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="activity-results-modal">
+    <div class="modal extra-wide">
+      <button class="modal-close" data-close-modal>×</button>
+      <div class="section-heading modal-heading"><div><h2>Aktif kullanıcı sonuçları</h2><p id="activity-results-name">Mesaj yazarı analizi</p></div><a class="secondary button-link" id="activity-results-csv" href="#">CSV indir</a></div>
+      <div id="activity-results-summary" class="candidate-summary"></div>
+      <div id="activity-results-table" class="table-wrap candidate-table"></div>
+    </div>
+  </div>
+
+  <aside class="notification-drawer hidden" id="notification-drawer">
+    <div class="section-heading"><div><h2>Bildirimler</h2><p>Pawgram sistem olayları</p></div><button class="ghost" id="close-notifications">Kapat</button></div>
+    <div id="notification-list" class="notification-list"></div>
+  </aside>
+
+  <div class="auth-overlay hidden" id="auth-overlay">
+    <div class="auth-card">
+      <div class="auth-logo">●</div>
+      <h1>Pawgram</h1>
+      <p id="auth-description">Yönetim paneline erişmek için parolanızı girin.</p>
+      <label>Yönetici parolası<input id="admin-password" type="password" minlength="8" autocomplete="current-password"></label>
+      <label id="admin-password-confirm-label" class="hidden">Parolayı tekrar girin<input id="admin-password-confirm" type="password" minlength="8" autocomplete="new-password"></label>
+      <button class="primary full" id="auth-submit">Giriş yap</button>
+      <div id="auth-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="onboarding-modal">
+    <div class="modal wide onboarding-modal">
+      <div class="onboarding-brand"><span>●</span><div><h2>Pawgram'a hoş geldiniz</h2><p>İlk kurulumu birkaç adımda tamamlayalım.</p></div></div>
+      <div class="onboarding-steps">
+        <div id="onboard-admin"><span>1</span><strong>Yönetici güvenliği</strong><small>Panel parolası oluşturulduğunda tamamlanır.</small></div>
+        <div id="onboard-api"><span>2</span><strong>Telegram API</strong><small>API ID ve API Hash bilgilerini Ayarlar'dan kaydedin.</small></div>
+        <div id="onboard-session"><span>3</span><strong>Telefon hesabı</strong><small>İlk Telegram hesabınızı bağlayın.</small></div>
+      </div>
+      <div class="onboarding-actions">
+        <button class="ghost" id="dismiss-onboarding">Şimdilik kapat</button>
+        <button class="primary" id="continue-onboarding">Sonraki adım</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

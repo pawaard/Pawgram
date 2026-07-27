@@ -1,0 +1,4 @@
+pyinstaller==6.14.2
+reportlab==4.4.3
+pillow==11.3.0
+python-socks[asyncio]==2.7.1

@@ -1,0 +1,1 @@
+"""Pawgram application package."""

@@ -1,0 +1,33 @@
+PAWGRAM TESLİM PAKETİ
+=====================
+
+1. Baslat.bat veya Pawgram.exe dosyasına çift tıklayın.
+2. Tarayıcı otomatik olarak açılır.
+3. İlk kullanımda yönetici parolası oluşturun.
+4. Ayarlar ekranından Telegram API ID ve API Hash bilgilerini kaydedin.
+5. Session'lar ekranından telefon hesabınızı bağlayın.
+
+Python veya ek bir kütüphane kurulması gerekmez. Gerekli çalışma dosyaları
+Pawgram klasörünün içinde bulunmaktadır. Klasör içindeki _internal dizinini
+ve diğer dosyaları silmeyin veya farklı konumlara taşımayın.
+
+Ayrıntılı kullanım için Pawgram_Kullanim_Kilavuzu.pdf dosyasını açın.
+
+GÜVENLİK NOTU
+Pawgram Telegram'ın FloodWait süresine uyar. Beklemeye giren aynı tarama,
+limiti aşmak amacıyla başka session'a aktarılmaz. Özel grup taraması için
+hesap üye değilse t.me/+... davet bağlantısı girildiğinde katılım isteği
+gönderilir; Telegram üzerinden onaylandıktan sonra işlem otomatik devam eder.
+
+Otomatik session seçiminde yeni işler, işlem başlamadan önce Ayarlar ekranındaki
+sabit günlük kotaya göre Round-Robin dağıtılır. Hata veya FloodWait yakalandıktan
+sonra session değiştirilmez.
+
+Varsayılan günlük aktivite işlem kotası session başına 30'dur ve Ayarlar
+ekranından değiştirilebilir. Aynı ekrandan her session için isteğe bağlı sabit
+SOCKS5 veya HTTP proxy tanımlanabilir. Proxy etkinse bağlantı başarısız olduğunda
+Pawgram doğrudan bağlantıya geri dönmez.
+
+Üye aktarım önizlemesinde kaynak grubun sahibi/yöneticileri aday listesinden
+çıkarılır. Daha önce onaylanmış uygun adaylar global iş geçmişine kaydedilir ve
+sonraki işlerde tekrar uygun aday olarak gösterilmez.
