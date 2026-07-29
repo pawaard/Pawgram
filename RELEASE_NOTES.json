@@ -1,0 +1,26 @@
+[
+  {
+    "version": "0.4.0",
+    "release_date": "2026-07-29",
+    "title": "Müşteri sürümü",
+    "changes": [
+      "Bağımsız Heartbeat servisi",
+      "Geliştirilmiş davet session rotasyonu",
+      "Aktiflik taramasında daha güvenilir session seçimi",
+      "Daha iyi session kurtarma ve işlem kilitleri",
+      "Otomatik güncelleme güvenliği ve veri koruması",
+      "İlk kullanım deneyimi ve üretim paketi iyileştirmeleri"
+    ]
+  },
+  {
+    "version": "0.3.0",
+    "release_date": "2026-07-28",
+    "title": "Proxy ve otomatik güncelleme",
+    "changes": [
+      "Session bazlı sabit proxy desteği",
+      "İmzalı GitHub güncelleme paketi",
+      "Güvenli geri alma ve başlangıç sağlık kontrolü",
+      "Lisans ve üretim güvenliği geliştirmeleri"
+    ]
+  }
+]

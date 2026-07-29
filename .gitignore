@@ -21,6 +21,10 @@ data/installation_id
 license_server/.env
 license_server/data/
 .pytest_cache/
+.codex-diff-review/
+.video_review/
+/data/
+*.diff
 /build/
 /dist/
 /build-ci/

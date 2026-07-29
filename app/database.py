@@ -48,8 +48,8 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
     mode TEXT NOT NULL DEFAULT 'preview',
     status TEXT NOT NULL DEFAULT 'draft',
     max_users INTEGER NOT NULL DEFAULT 25,
-    min_delay_seconds INTEGER NOT NULL DEFAULT 45,
-    max_delay_seconds INTEGER NOT NULL DEFAULT 90,
+    min_delay_seconds INTEGER NOT NULL DEFAULT 20,
+    max_delay_seconds INTEGER NOT NULL DEFAULT 40,
     daily_limit INTEGER NOT NULL DEFAULT 50,
     processed INTEGER NOT NULL DEFAULT 0,
     succeeded INTEGER NOT NULL DEFAULT 0,
@@ -387,6 +387,20 @@ def initialize_database() -> None:
         for column, definition in PENDING_AUTH_COLUMNS.items():
             if column not in existing_pending_columns:
                 connection.execute(f"ALTER TABLE pending_auth ADD COLUMN {column} {definition}")
+        now = utc_now()
+        connection.executemany(
+            """
+            INSERT INTO app_settings(key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO NOTHING
+            """,
+            [
+                ("heartbeat_enabled", "false", now),
+                ("heartbeat_interval_minutes", "60", now),
+                ("heartbeat_group_id", "", now),
+                ("heartbeat_message_template", "Merhabaa", now),
+            ],
+        )
 
 
 @contextmanager

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     app_name: str = "Pawgram"
     app_env: str = "development"
     app_port: int = Field(default=8000, ge=1, le=65535)
+    customer_release: bool = False
     app_secret_key: str = "change-this-in-production"
     telegram_api_id: int | None = None
     telegram_api_hash: str | None = None

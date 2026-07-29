@@ -1,4 +1,4 @@
-const state = { sessions: [], groups: [], jobs: [], logs: [], pendingLogs: [], logVisibleCount: 100, logsAutoRefresh: true, logsLastSeenId: 0, activityScans: [], heartbeat: null, groupAccessBatches: [], sessionHealthBatches: [], health: null, license: null, telegramSettings: null, rotationSettings: null, settingsOverview: null, onboarding: null, defaultLoginProxy: null, currentJobId: null, currentActivityScanId: null, currentGroupAccessBatchId: null, currentGroupAccessDetail: null, currentGroupSessionId: null, currentSessionHealthBatchId: null, runningScanIds: new Set(), loginPhone: "" };
+const state = { sessions: [], groups: [], jobs: [], logs: [], pendingLogs: [], logVisibleCount: 100, logsAutoRefresh: true, logsLastSeenId: 0, activityScans: [], heartbeat: null, releaseNotes: null, groupAccessBatches: [], sessionHealthBatches: [], health: null, license: null, telegramSettings: null, rotationSettings: null, settingsOverview: null, onboarding: null, defaultLoginProxy: null, currentJobId: null, currentActivityScanId: null, currentGroupAccessBatchId: null, currentGroupAccessDetail: null, currentGroupSessionId: null, currentSessionHealthBatchId: null, runningScanIds: new Set(), loginPhone: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -1495,10 +1495,48 @@ async function checkSettingsUpdate() {
   }
 }
 
+function renderReleaseHistory() {
+  const container = $("#release-history-list");
+  if (!container || !state.releaseNotes) return;
+  const history = state.releaseNotes.history || [];
+  container.innerHTML = history.length ? history.map(item => `
+    <article class="release-history-item">
+      <div><strong>Pawgram ${escapeHtml(item.version)}</strong><small>${escapeHtml(item.release_date)} · ${escapeHtml(item.title)}</small></div>
+      <ul>${(item.changes || []).map(change => `<li>${escapeHtml(change)}</li>`).join("")}</ul>
+    </article>`).join("") : emptyTable("Sürüm geçmişi bulunamadı", "Yayın notları yeni sürümlerle birlikte burada gösterilir.");
+}
+
+async function loadReleaseNotes({showPending = false} = {}) {
+  state.releaseNotes = await api("/api/release-notes");
+  renderReleaseHistory();
+  if (!showPending || !state.releaseNotes.pending_version || !state.releaseNotes.current) return;
+  const current = state.releaseNotes.current;
+  $("#release-notes-title").textContent = `Pawgram ${current.version}`;
+  $("#release-notes-date").textContent = `${current.release_date} · ${current.title}`;
+  $("#release-notes-changes").innerHTML = (current.changes || []).map(change => `<div><span>✓</span><strong>${escapeHtml(change)}</strong></div>`).join("");
+  openModal("#release-notes-modal");
+}
+
+async function acknowledgeReleaseNotes() {
+  const version = state.releaseNotes?.pending_version;
+  if (!version) return closeModals();
+  const button = $("#acknowledge-release-notes");
+  button.disabled = true;
+  try {
+    state.releaseNotes = await api(`/api/release-notes/${encodeURIComponent(version)}/acknowledge`, {method:"POST"});
+    closeModals();
+    renderReleaseHistory();
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadSettingsPage() {
   settingsLoading = true;
   try {
-    await Promise.all([loadSettingsOverview(), loadBackups(), loadTelegramSettings(), loadRotationSettings(), loadDefaultProxySettings(), loadProxySettings(), loadInvitePolicy(), loadLicenseStatus()]);
+    await Promise.all([loadSettingsOverview(), loadBackups(), loadTelegramSettings(), loadRotationSettings(), loadDefaultProxySettings(), loadProxySettings(), loadInvitePolicy(), loadLicenseStatus(), loadReleaseNotes()]);
     markSettingsFieldsSaved();
     validateSettingsControls();
     filterSettingsSections();
@@ -2005,11 +2043,24 @@ async function loadOnboarding() {
     const complete = state.onboarding[`${key}_configured`];
     $("#onboard-"+key).classList.toggle("done", complete);
   });
+  const customerRelease = Boolean(state.onboarding.customer_release);
+  $("#onboard-admin").classList.toggle("hidden", customerRelease);
+  $("#onboard-api").classList.toggle("hidden", customerRelease);
+  if (customerRelease) {
+    $("#onboarding-description").textContent = "Başlamak için Telegram hesabınızı bağlayın.";
+    $("#onboard-session strong").textContent = "Telegram hesabınızı bağlayın";
+    $("#onboard-session small").textContent = "Telefon numaranızı girin ve Telegram'dan gelen kodu onaylayın.";
+    $("#continue-onboarding").textContent = "Telegram hesabı ekle";
+  }
   if (!state.onboarding.complete && sessionStorage.getItem("pawgram_onboarding_dismissed") !== "1") openModal("#onboarding-modal");
 }
 
 function continueOnboarding() {
   closeModals();
+  if (state.onboarding?.customer_release && !state.onboarding?.session_configured) {
+    navigate("sessions");
+    return runUi(openSessionModalFresh());
+  }
   if (!state.onboarding?.api_configured) return navigate("settings");
   if (!state.onboarding?.session_configured) { navigate("sessions"); runUi(openSessionModalFresh()); }
 }
@@ -2017,6 +2068,7 @@ function continueOnboarding() {
 async function startApp() {
   await refreshAll();
   await Promise.all([loadNotifications(), loadOnboarding()]);
+  await loadReleaseNotes({showPending:true});
 }
 
 async function bootstrap() {
@@ -2025,8 +2077,8 @@ async function bootstrap() {
     if (license.required && !license.valid) return showLicenseOverlay(license.message);
     $("#license-overlay").classList.add("hidden");
     const auth = await api("/api/auth/status");
-    if (!auth.configured) return configureAuthOverlay(true);
-    if (!auth.authenticated) return configureAuthOverlay(false);
+    if (auth.required && !auth.configured) return configureAuthOverlay(true);
+    if (auth.required && !auth.authenticated) return configureAuthOverlay(false);
     await startApp();
   } catch (error) { toast(error.message); }
 }
@@ -2120,6 +2172,7 @@ $("#save-api-settings").addEventListener("click", saveTelegramSettings);
 $("#save-rotation-settings").addEventListener("click", saveRotationSettings);
 $("#refresh-settings-overview").addEventListener("click", () => runUi(loadSettingsOverview()));
 $("#check-settings-update").addEventListener("click", () => runUi(checkSettingsUpdate()));
+$("#acknowledge-release-notes").addEventListener("click", () => runUi(acknowledgeReleaseNotes()));
 $("#download-diagnostics").addEventListener("click", () => {
   $("#diagnostics-status").textContent = "Maskelenmiş tanılama raporu hazırlanıyor…";
   setTimeout(() => { $("#diagnostics-status").textContent = "Rapor indirildi; gizli bilgiler dahil edilmedi."; }, 800);

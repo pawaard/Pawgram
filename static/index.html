@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=20260729-signature-v1">
+  <link rel="stylesheet" href="/static/features.css?v=20260729-customer-release-v1">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -380,6 +380,10 @@
             </div>
             <div class="settings-action-row"><button class="secondary" id="check-settings-update">Güncellemeyi kontrol et</button><div id="settings-update-message" class="proxy-status">Kontrol yalnızca sürüm bilgisini okur; paket indirmez veya kurmaz.</div></div>
           </div>
+          <div class="panel" data-settings-section data-settings-keywords="sürüm geçmişi yenilikler değişiklikler">
+            <div class="section-heading"><div><h2>Sürüm geçmişi</h2><p>Pawgram güncellemeleri ve yayın notları</p></div><span class="badge active">Güncel</span></div>
+            <div id="release-history-list" class="release-history-list"></div>
+          </div>
           <div class="panel" data-settings-section data-settings-keywords="tanılama rapor sistem sağlık gizlilik destek hata">
             <div class="section-heading"><div><h2>Güvenli tanılama</h2><p>Destek için gizli bilgi içermeyen sistem özeti</p></div><span class="badge active">Maskelenmiş</span></div>
             <div class="diagnostics-safe-list"><span>✓ Telefon ve Telegram kullanıcı bilgileri dahil edilmez</span><span>✓ Proxy adresi, kullanıcı adı ve parola dahil edilmez</span><span>✓ API Hash, session verisi ve şifreleme anahtarı dahil edilmez</span><span>✓ Yalnızca sürüm, durum ve sayısal özetler bulunur</span></div>
@@ -453,8 +457,8 @@
         <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" max="1000" value="100"></label>
         <label>Çekilecek grup<input id="job-source" placeholder="-100... veya @kaynak"></label>
         <label>Gönderilecek grup<input id="job-target" placeholder="-100... veya @hedef"></label>
-        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="0"></label>
-        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="0" value="0"></label>
+        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="20"></label>
+        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="0" value="40"></label>
         <label>Günlük koruma sınırı<input id="job-daily" type="number" min="1" value="50"></label>
         <label class="check-label"><input id="job-dry-run" type="checkbox" checked> Test/önizleme modu</label>
         <label>Planlanan başlangıç<input id="job-scheduled" type="datetime-local"></label>
@@ -510,9 +514,9 @@
         <label>Günlük üye ekleme sınırı
           <input id="activity-transfer-daily" type="number" min="1" max="1000" value="50"></label>
         <label>Minimum bekleme (sn)
-          <input id="activity-transfer-min-delay" type="number" min="0" value="0"></label>
+          <input id="activity-transfer-min-delay" type="number" min="0" value="20"></label>
         <label>Maksimum bekleme (sn)
-          <input id="activity-transfer-max-delay" type="number" min="0" value="0"></label>
+          <input id="activity-transfer-max-delay" type="number" min="0" value="40"></label>
       </div>
       <button class="primary full" id="prepare-activity-transfer">Grubu bul ve adayları hazırla</button>
       <div id="activity-transfer-message" class="form-message hidden"></div>
@@ -548,9 +552,20 @@
     </div>
   </div>
 
+  <div class="modal-backdrop hidden" id="release-notes-modal">
+    <div class="modal wide release-notes-modal">
+      <div class="release-notes-hero">
+        <div class="release-notes-mark">P</div>
+        <div><small>PAWGRAM GÜNCELLENDİ</small><h2 id="release-notes-title">Pawgram</h2><p id="release-notes-date">Yeni sürüm kullanıma hazır.</p></div>
+      </div>
+      <div class="release-notes-body"><h3>Neler yeni?</h3><div id="release-notes-changes" class="release-notes-changes"></div></div>
+      <div class="release-notes-actions"><button class="primary" id="acknowledge-release-notes">Devam et</button></div>
+    </div>
+  </div>
+
   <div class="modal-backdrop hidden" id="onboarding-modal">
     <div class="modal wide onboarding-modal">
-      <div class="onboarding-brand"><span>●</span><div><h2>Pawgram'a hoş geldiniz</h2><p>İlk kurulumu birkaç adımda tamamlayalım.</p></div></div>
+      <div class="onboarding-brand"><span>●</span><div><h2>Pawgram'a hoş geldiniz</h2><p id="onboarding-description">İlk kurulumu birkaç adımda tamamlayalım.</p></div></div>
       <div class="onboarding-steps">
         <div id="onboard-admin"><span>1</span><strong>Yönetici güvenliği</strong><small>Panel parolası oluşturulduğunda tamamlanır.</small></div>
         <div id="onboard-api"><span>2</span><strong>Telegram API</strong><small>API ID ve API Hash bilgilerini Ayarlar'dan kaydedin.</small></div>
@@ -564,6 +579,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=20260729-heartbeat-v1"></script>
+  <script src="/static/app.js?v=20260729-customer-release-v1"></script>
 </body>
 </html>

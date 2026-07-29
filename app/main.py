@@ -46,6 +46,11 @@ from app.licensing import (
     refresh_license,
 )
 from app.rate_limit import InMemoryRateLimiter
+from app.release_history import (
+    acknowledge_release_notes,
+    initialize_release_tracking,
+    release_notes_overview,
+)
 from app.scheduling import next_job_run
 from app.schemas import (
     ActivityScanRequest,
@@ -271,6 +276,7 @@ async def invite_scheduler_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    initialize_release_tracking(APP_VERSION)
     stale_session_locks = clear_stale_session_operations()
     with get_connection() as connection:
         interrupted_jobs = connection.execute(
@@ -398,7 +404,15 @@ async def lifespan(_: FastAPI):
         await stop_scheduler(license_task)
 
 
-app = FastAPI(title=get_settings().app_name, version=APP_VERSION, lifespan=lifespan)
+_startup_settings = get_settings()
+app = FastAPI(
+    title=_startup_settings.app_name,
+    version=APP_VERSION,
+    lifespan=lifespan,
+    docs_url=None if _startup_settings.customer_release else "/docs",
+    redoc_url=None if _startup_settings.customer_release else "/redoc",
+    openapi_url=None if _startup_settings.customer_release else "/openapi.json",
+)
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["127.0.0.1", "localhost", "testserver"],
@@ -820,9 +834,15 @@ async def license_activate(payload: LicenseActivationRequest):
 @app.get("/api/auth/status")
 async def auth_status(request: Request):
     configured = bool(get_app_setting("admin_password_hash"))
+    required = not current_settings().customer_release
     return {
+        "required": required,
         "configured": configured,
-        "authenticated": not configured or verify_auth_token(request.cookies.get("pawgram_session")),
+        "authenticated": (
+            not required
+            or not configured
+            or verify_auth_token(request.cookies.get("pawgram_session"))
+        ),
     }
 
 
@@ -890,12 +910,28 @@ async def onboarding():
     api_configured = current_settings().telegram_configured or bool(
         get_app_setting("telegram_api_id") and get_app_setting("telegram_api_hash_encrypted")
     )
+    customer_release = current_settings().customer_release
+    admin_configured = customer_release or bool(get_app_setting("admin_password_hash"))
     return {
-        "admin_configured": bool(get_app_setting("admin_password_hash")),
+        "customer_release": customer_release,
+        "admin_configured": admin_configured,
         "api_configured": api_configured,
         "session_configured": session_count > 0,
-        "complete": bool(get_app_setting("admin_password_hash")) and api_configured and session_count > 0,
+        "complete": admin_configured and api_configured and session_count > 0,
     }
+
+
+@app.get("/api/release-notes")
+async def release_notes():
+    return release_notes_overview(APP_VERSION)
+
+
+@app.post("/api/release-notes/{version}/acknowledge")
+async def release_notes_acknowledge(version: str):
+    try:
+        return acknowledge_release_notes(version, APP_VERSION)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.get("/api/settings/telegram")

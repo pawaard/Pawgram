@@ -1,74 +1,124 @@
 param(
-    [string]$PythonPath = ""
+    [string]$PythonPath = "",
+    [string]$DatabasePath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 
-if (& git -C $projectRoot status --porcelain --untracked-files=no) {
-    throw "Müşteri paketi yalnızca commit edilmiş temiz kaynak koddan oluşturulabilir."
+if (-not (Test-Path -LiteralPath (Join-Path $projectRoot ".git"))) {
+    throw "Müşteri release yalnızca Git çalışma kopyasından oluşturulabilir."
+}
+if (& git -C $projectRoot status --porcelain) {
+    throw "Müşteri release yalnızca commit edilmiş temiz kaynak koddan oluşturulabilir."
 }
 
 if (-not $PythonPath) {
-    $runtimeRoot = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".cache\codex-runtimes"
-    $PythonPath = Get-ChildItem -LiteralPath $runtimeRoot -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -like "*dependencies\python\python.exe" } |
-        Sort-Object LastWriteTimeUtc -Descending |
-        Select-Object -First 1 -ExpandProperty FullName
+    $candidates = @(
+        $env:PAWGRAM_PYTHON,
+        (Join-Path $projectRoot ".venv314\Scripts\python.exe"),
+        (Join-Path $projectRoot ".venv\Scripts\python.exe")
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+    $PythonPath = $candidates | Select-Object -First 1
 }
 if (-not $PythonPath -or -not (Test-Path -LiteralPath $PythonPath)) {
     throw "Uyumlu Python bulunamadı. -PythonPath parametresini kullanın."
 }
-
-$databasePath = Join-Path $projectRoot "data\console.db"
-if (-not (Test-Path -LiteralPath $databasePath)) {
-    throw "Yerel veritabanı bulunamadı; varsayılan proxy müşteri paketine aktarılamaz."
+if (-not $DatabasePath) {
+    $DatabasePath = Join-Path $projectRoot "data\console.db"
+}
+$DatabasePath = [IO.Path]::GetFullPath($DatabasePath)
+if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) {
+    throw "Telegram ve varsayılan proxy başlangıç ayarlarının bulunduğu veritabanı bulunamadı."
 }
 
 $version = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
+$versionResource = Get-Content -LiteralPath (Join-Path $projectRoot "assets\pawgram-version-info.txt") -Raw
+if ($versionResource -notmatch [regex]::Escape("ProductVersion', u'$version'")) {
+    throw "Windows sürüm kaynağı VERSION dosyasıyla eşleşmiyor."
+}
+
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $stageRoot = Join-Path $tempRoot ("PawgramCustomer-" + [Guid]::NewGuid().ToString("N"))
 $sourceArchive = Join-Path $stageRoot "source.zip"
 $sourceRoot = Join-Path $stageRoot "source"
-$releaseRoot = Join-Path $projectRoot "releases"
-$releaseFolder = Join-Path $releaseRoot "Pawgram_Musteri_${version}_${timestamp}"
-$releaseZip = "$releaseFolder.zip"
+$buildPackages = Join-Path $stageRoot "build-packages"
+$deliveryRoot = Join-Path $projectRoot "releases\Pawgram_Musteri_$($version)_$timestamp"
+$packageFolder = Join-Path $deliveryRoot "Pawgram"
+$releaseZip = Join-Path $projectRoot "releases\Pawgram-Customer-$version-win64.zip"
 
-New-Item -ItemType Directory -Path $stageRoot, $sourceRoot, $releaseFolder -Force | Out-Null
+New-Item -ItemType Directory -Path $stageRoot, $sourceRoot, $buildPackages, $packageFolder -Force | Out-Null
 try {
     & git -C $projectRoot archive --format=zip --output=$sourceArchive HEAD
-    if ($LASTEXITCODE -ne 0) { throw "Kaynak arşivi oluşturulamadı." }
+    if ($LASTEXITCODE -ne 0) { throw "Commit edilmiş kaynak arşivi oluşturulamadı." }
     Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceRoot
 
-    $venvRoot = Join-Path $stageRoot "build-venv"
-    & $PythonPath -m venv $venvRoot
-    if ($LASTEXITCODE -ne 0) { throw "Temiz derleme ortamı oluşturulamadı." }
-    $venvPython = Join-Path $venvRoot "Scripts\python.exe"
-    & $venvPython -m pip install --disable-pip-version-check -r (Join-Path $sourceRoot "requirements.txt") -r (Join-Path $sourceRoot "requirements-build.txt")
-    if ($LASTEXITCODE -ne 0) { throw "Derleme bağımlılıkları kurulamadı." }
-    & $venvPython -m PyInstaller --noconfirm (Join-Path $sourceRoot "Pawgram.spec") --distpath (Join-Path $stageRoot "dist") --workpath (Join-Path $stageRoot "build")
-    if ($LASTEXITCODE -ne 0) { throw "Pawgram.exe derlenemedi." }
+    & $PythonPath -m pip install --disable-pip-version-check --target $buildPackages `
+        -r (Join-Path $sourceRoot "requirements.txt") `
+        -r (Join-Path $sourceRoot "requirements-build.txt")
+    if ($LASTEXITCODE -ne 0) { throw "Sabitlenmiş release bağımlılıkları kurulamadı." }
 
-    Copy-Item -Path (Join-Path $stageRoot "dist\Pawgram\*") -Destination $releaseFolder -Recurse -Force
-    Copy-Item -LiteralPath $sourceRoot -Destination (Join-Path $releaseFolder "Kaynak_Kod") -Recurse -Force
-
+    $previousPythonPath = $env:PYTHONPATH
+    $env:PYTHONPATH = "$buildPackages;$sourceRoot"
     Push-Location -LiteralPath $sourceRoot
     try {
-        & $venvPython (Join-Path $sourceRoot "scripts\export_default_proxy_env.py") --database $databasePath --output (Join-Path $releaseFolder ".env")
-        if ($LASTEXITCODE -ne 0) { throw "Varsayılan proxy müşteri paketine aktarılamadı." }
+        & $PythonPath (Join-Path $sourceRoot "scripts\export_customer_env.py") `
+            --database $DatabasePath `
+            --output (Join-Path $packageFolder ".env")
+        if ($LASTEXITCODE -ne 0) { throw "Müşteri başlangıç yapılandırması üretilemedi." }
+
+        & $PythonPath -m PyInstaller --noconfirm (Join-Path $sourceRoot "Pawgram.Customer.spec") `
+            --distpath (Join-Path $stageRoot "dist") `
+            --workpath (Join-Path $stageRoot "build")
+        if ($LASTEXITCODE -ne 0) { throw "Pawgram müşteri EXE dosyası derlenemedi." }
     }
     finally {
         Pop-Location
+        if ($null -eq $previousPythonPath) {
+            Remove-Item Env:PYTHONPATH -ErrorAction SilentlyContinue
+        } else {
+            $env:PYTHONPATH = $previousPythonPath
+        }
     }
 
-    Compress-Archive -Path (Join-Path $releaseFolder "*") -DestinationPath $releaseZip -CompressionLevel Optimal
-    Write-Output "Müşteri klasörü: $releaseFolder"
+    Copy-Item -Path (Join-Path $stageRoot "dist\Pawgram\*") -Destination $packageFolder -Recurse -Force
+
+    $versionInfo = (Get-Item -LiteralPath (Join-Path $packageFolder "Pawgram.exe")).VersionInfo
+    if ($versionInfo.ProductVersion -ne $version -or $versionInfo.CompanyName -ne "Paward") {
+        throw "Pawgram.exe sürüm veya yayıncı bilgisi doğrulanamadı."
+    }
+
+    if (Test-Path -LiteralPath $releaseZip) {
+        Remove-Item -LiteralPath $releaseZip -Force
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::CreateFromDirectory(
+        $deliveryRoot,
+        $releaseZip,
+        [IO.Compression.CompressionLevel]::Optimal,
+        $false
+    )
+
+    & $PythonPath (Join-Path $sourceRoot "scripts\verify_customer_release.py") `
+        --folder $packageFolder `
+        --zip $releaseZip `
+        --version $version `
+        --forbid-path $projectRoot `
+        --forbid-path $stageRoot
+    if ($LASTEXITCODE -ne 0) { throw "Müşteri release içerik denetiminden geçemedi." }
+
+    $sha256 = (Get-FileHash -LiteralPath $releaseZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Output "Müşteri klasörü: $packageFolder"
     Write-Output "Müşteri ZIP: $releaseZip"
+    Write-Output "SHA-256: $sha256"
 }
 finally {
     $resolvedStage = [IO.Path]::GetFullPath($stageRoot)
-    if ($resolvedStage.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and (Test-Path -LiteralPath $resolvedStage)) {
+    if (
+        $resolvedStage.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        (Test-Path -LiteralPath $resolvedStage)
+    ) {
         Remove-Item -LiteralPath $resolvedStage -Recurse -Force
     }
 }

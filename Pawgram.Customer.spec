@@ -6,13 +6,20 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('static', 'static'), ('VERSION', '.'), ('RELEASE_NOTES.json', '.')],
-    hiddenimports=['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'python_socks.async_.asyncio'],
+    hiddenimports=[
+        'uvicorn.logging',
+        'uvicorn.loops.auto',
+        'uvicorn.protocols.http.auto',
+        'uvicorn.protocols.websockets.auto',
+        'uvicorn.lifespan.on',
+        'python_socks.async_.asyncio',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['pytest', 'unittest', 'mypy', 'ruff', 'bandit', 'pip_audit'],
     noarchive=False,
-    optimize=0,
+    optimize=1,
 )
 pyz = PYZ(a.pure)
 

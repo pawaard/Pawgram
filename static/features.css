@@ -226,6 +226,28 @@ button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
 .sidebar-signature a:hover { color: #86dfff; }
 .sidebar-signature small { margin-top: 2px; color: #3d4c60; font-size: 8px; }
 .sidebar .safety-card { margin-top: 8px; }
+.release-history-list { display: grid; gap: 10px; padding: 14px 16px 16px; }
+.release-history-item { padding: 13px; border: 1px solid var(--border); border-radius: 8px; background: #0b1622; }
+.release-history-item > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.release-history-item strong, .release-history-item small { display: block; }
+.release-history-item strong { color: #dce8f5; font-size: 12px; }
+.release-history-item small { color: var(--muted); font-size: 9px; text-align: right; }
+.release-history-item ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
+.release-history-item li { color: #9fb0c4; font-size: 10px; }
+.release-history-item li:before { margin-right: 7px; color: var(--green); content: "✓"; }
+.release-notes-modal { max-width: 680px; overflow: hidden; padding: 0; border-color: #245778; background: linear-gradient(155deg, #0d1d2b, #09131e 70%); }
+.release-notes-hero { display: flex; align-items: center; gap: 18px; padding: 28px 30px 22px; border-bottom: 1px solid #1c3b52; background: radial-gradient(circle at 15% 0, rgba(24,168,239,.18), transparent 48%); }
+.release-notes-mark { display: grid; width: 64px; height: 64px; place-items: center; border: 1px solid #2c769f; border-radius: 18px; background: linear-gradient(145deg, #159bdc, #0c4f75); box-shadow: 0 14px 35px rgba(10,116,170,.28); color: white; font-size: 30px; font-weight: 800; }
+.release-notes-hero small { color: #64c8f7; font-size: 9px; letter-spacing: 1.4px; }
+.release-notes-hero h2 { margin: 5px 0 3px; font-size: 25px; }
+.release-notes-hero p { margin: 0; color: var(--muted); }
+.release-notes-body { padding: 22px 30px 12px; }
+.release-notes-body h3 { margin: 0 0 13px; font-size: 13px; }
+.release-notes-changes { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.release-notes-changes > div { display: flex; align-items: center; gap: 9px; min-height: 42px; padding: 10px 12px; border: 1px solid #1e3b4e; border-radius: 7px; background: rgba(10,27,40,.85); }
+.release-notes-changes span { color: var(--green); }
+.release-notes-changes strong { color: #bdcddd; font-size: 10px; line-height: 1.4; }
+.release-notes-actions { display: flex; justify-content: flex-end; padding: 10px 30px 26px; }
 @media (max-width: 1050px) { .proxy-form, .default-proxy-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1050px) { .proxy-bulk { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 1050px) { .session-invite-policy { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -242,3 +264,4 @@ button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
 @media (max-width: 620px) { .group-list-tools, .group-access-result-tools, .group-detail-grid, .group-suitability-grid, .group-detail-sections { grid-template-columns: 1fr; } .group-detail-sections dl div { grid-template-columns: 1fr; gap: 2px; } .group-detail-actions { align-items: stretch; flex-direction: column; } }
 @media (max-width: 620px) { .settings-health-grid, .settings-search-bar, .update-status-card { grid-template-columns: 1fr; } .settings-search-bar > span { grid-column: auto; } .settings-unsaved-warning, .settings-action-row { align-items: stretch; flex-direction: column; } }
 @media (max-width: 720px) { .log-toolbar { grid-template-columns: 1fr 1fr; } .log-toolbar > label:first-child { grid-column: 1 / -1; } .log-status-bar, .log-heading-actions { align-items: stretch; flex-direction: column; } .log-status-bar > div { flex-wrap: wrap; } #page-logs .log-line { grid-template-columns: 72px 1fr; } #page-logs .log-line .log-message-text { grid-column: 1 / -1; } .log-detail-meta { grid-template-columns: 1fr 1fr; } .app-footer { padding-inline: 15px; } .sidebar-signature { display: none; } }
+@media (max-width: 620px) { .release-history-item > div { align-items: flex-start; flex-direction: column; } .release-history-item small { text-align: left; } .release-notes-changes { grid-template-columns: 1fr; } .release-notes-hero, .release-notes-body, .release-notes-actions { padding-inline: 18px; } }
