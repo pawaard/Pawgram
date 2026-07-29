@@ -119,3 +119,10 @@ class UpdaterTests(unittest.TestCase):
         self.assertLess(health_check, backup_delete)
         self.assertIn("$newProcess.HasExited", script)
         self.assertIn("45 saniye içinde başlangıç doğrulaması vermedi", script)
+
+    def test_installer_only_replaces_runtime_and_preserves_customer_storage(self):
+        script = _updater_script()
+        self.assertIn('$targets = @("Pawgram.exe", "_internal")', script)
+        self.assertNotIn('$targets = @("Pawgram.exe", "_internal", ".env")', script)
+        self.assertNotIn('$targets = @("Pawgram.exe", "_internal", "data")', script)
+        self.assertIn("data klasörü korundu", script)

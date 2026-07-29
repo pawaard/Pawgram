@@ -1,121 +1,164 @@
 # Pawgram
 
-Telethon tabanlı, çoklu Telegram hesabı ve grup doğrulama yönetim paneli.
+Pawgram; çoklu Telegram hesabı, güvenli proxy, üye daveti, aktivite taraması,
+Heartbeat ve otomatik güncelleme özelliklerine sahip Windows yönetim uygulamasıdır.
 
-## Ticari lisans sistemi
+## Müşteri sürümü
 
-Pawgram 0.3.0; ayrı lisans sunucusu, haftalık/aylık/üç aylık kod üretimi, ilk aktivasyonda başlayan süre, cihaz sınırı, cihaz sıfırlama, lisans iptali ve süre uzatma desteği içerir. Lisans sunucusu Ed25519 ile kısa ömürlü kullanım belgesi imzalar; imza private key'i müşteri paketine girmez. Ticari derlemede lisans zorunluluğu EXE içine alınır ve `.env` dosyasından kapatılamaz.
+Müşteri paketi kaynak kod veya Python kurulumu gerektirmez:
 
-Kişisel kaynak sürümü mevcut sahibin kullanımını kilitlememek için lisanssız çalışır. Ticari dağıtım, HTTPS alan adı hazırlandıktan sonra `scripts/build_commercial.ps1` ile ayrı ve temiz bir pakete dönüştürülür. Sunucu kurulumu ve güvenlik şartları `license_server/README.md` dosyasında açıklanmıştır.
+1. `Pawgram-Customer-<version>-win64.zip` dosyasını indirin.
+2. ZIP içindeki `Pawgram` klasörünü çıkarın.
+3. `Pawgram.exe` dosyasına çift tıklayın.
+4. Telegram hesabınızı telefon numarası ve Telegram doğrulama koduyla bağlayın.
+
+Telegram API ve varsayılan proxy başlangıç ayarları müşteri paketinde hazırdır.
+İlk açılışta yönetici parolası, API ID veya API Hash istenmez. Hiç session yoksa
+yalnızca Telegram hesabını bağlamayı anlatan karşılama ekranı gösterilir.
+
+Müşteri paketinin kökünde yalnızca şunlar bulunur:
+
+- `Pawgram.exe`
+- `_internal`
+- `.env`
+
+Veritabanı, session, log, cache, test, kaynak kod, imzalama anahtarı ve geliştirme
+artefaktları dağıtım paketine eklenmez.
+
+## Güvenli varsayılanlar
+
+Yeni müşteri veritabanında:
+
+- Davet gecikmesi: rastgele `20–40` saniye
+- Session parti limiti: `3` başarılı davet
+- Parti dinlenmesi: `20` dakika
+- Günlük koruma limiti: `50`
+- FloodWait ve PeerFlood koruması: etkin
+- Heartbeat: kapalı
+
+Gecikme her aday arasında güvenli rastgele sayı üreteciyle seçilir. Telegram'ın
+bildirdiği FloodWait süresi kısaltılmaz veya atlanmaz.
+
+## Davet session rotasyonu
+
+Davet işlerinde session seçimi merkezi Round‑Robin seçiciyle yapılır. Son başarılı
+session saklanır ve sonraki arama onun ardından başlar.
+
+- FloodWait alan session kendi bekleme süresine alınır; kalan adaylar sıradaki uygun
+  session ile işlenmeye devam eder.
+- PeerFlood alan session 24 saat bekletilir; iş sıradaki uygun session'a geçer.
+- Parti limitine ulaşan session `batch_wait` durumuna alınır ve 20 dakika sonra
+  otomatik döner.
+- Günlük davet kotası dolan session o gün için atlanır.
+- Proxy hatası, devre dışı session ve aktif işlem kilidi bulunan session seçilmez.
+- Yalnızca bütün session'lar kullanılamıyorsa iş en erken gerçek dönüş zamanına
+  planlanır.
+
+Aktivite taraması kendi uygunluk ve session kullanım kurallarını korur; davet
+rotasyonunun FloodWait/parti devri tarama davranışını değiştirmez.
+
+## Proxy güvenliği
+
+Her Telegram hesabı sabit SOCKS5 veya HTTP proxy ile çalışır. Proxy, Telegram
+istemcisi oluşturulmadan önce test edilir. Bağlantı başarısızsa session
+`proxy_error` durumuna alınır ve uygulama ana IP üzerinden bağlantı kurmaz.
+
+Yeni müşteri paketindeki varsayılan proxy, hesap ekleme ekranına otomatik gelir.
+Müşteri gerekirse kendi proxy bilgileriyle değiştirebilir.
 
 ## Otomatik güncelleme
 
-Python gerektirmeyen Windows sürümü açılışta resmi GitHub Releases alanındaki `pawgram-update.json` manifestini kontrol eder. Yalnızca SHA-256 özeti eşleşen ve Pawgram Ed25519 anahtarıyla imzalanmış paketler kurulur. Güncelleme sırasında `data` klasörü, veritabanı, Telegram session bilgileri, API ayarları ve proxy parolaları korunur. Kurulum başarısız olursa eski sürüm geri yüklenir ve ayrıntılar `data/update.log` dosyasına yazılır.
+Windows EXE her açılışta GitHub Releases alanındaki
+`pawgram-update.json` manifestini kontrol eder. Manifest Ed25519 ile imzalanır;
+paketin SHA‑256 özeti ve resmi GitHub adresi doğrulanmadan kurulum yapılmaz.
 
-Güncelleme kontrolünü geçici olarak kapatmak için `PAWGRAM_SKIP_UPDATE=1` ortam değişkeni kullanılabilir. Kaynak kod sürümü otomatik EXE güncellemesi çalıştırmaz.
+Yeni sürüm bulunduğunda:
 
-Bu ilk sürüm şunları içerir:
+1. Paket otomatik indirilir.
+2. Yalnızca `Pawgram.exe` ve `_internal` değiştirilir.
+3. `.env` ve `data` klasörü korunur.
+4. Yeni sürüm otomatik başlatılır.
+5. Başlangıç health işareti doğrulanır.
+6. Başlangıç başarısızsa eski EXE ve runtime geri yüklenip yeniden başlatılır.
 
-- Sınırsız sayıda telefon/session kaydı
-- Telegram kodu ve 2FA ile güvenli giriş
-- Telegram API ID ve API Hash'i doğrudan panelden şifreli kaydetme
-- Şifrelenmiş telefon ve Telethon session verisi
-- Grup ID, `@kullaniciadi` veya herkese açık `t.me` bağlantısı doğrulama
-- Hesabın erişebildiği grupları listeleme
-- Çekilecek/gönderilecek grup doğrulamalı iş kuyruğu
-- Test/önizleme modu
-- FloodWait algılandığında hesabı zorunlu beklemeye alma
-- Session, grup ve kuyruk logları
-- İlk kullanım kurulum sihirbazı
-- Yönetici parolası ve güvenli HttpOnly oturum çerezi
-- Aday üye önizleme ve uygunluk sınıflandırması
-- Bot, silinmiş hesap ve hedef grupta bulunanları otomatik ayıklama
-- Grup davet yetkisi kontrolü
-- Açık yönetici onayı
-- Planlanan başlangıç ve çalışma saatleri
-- Session sağlık puanı ve FloodWait geri sayımı
-- Bildirim merkezi
-- Tek tıkla SQLite yedeği ve indirme
-- Ayrıntılı CSV aday raporu
-- Her Telegram hesabına özel, şifreli ve sabit SOCKS5/HTTP proxy
-- TXT dosyasından boş hesaplara sırayla toplu proxy dağıtımı
-- Proxy yoksa veya yanıt vermiyorsa ana IP'ye dönmeden işlemi durdurma
-- Seçili uygun adayları Telegram'ın resmi gruba üye ekleme isteğiyle hedef gruba ekleme
-- Üç başarılı eklemeden sonra 30 dakikalık parti beklemesi
-- PeerFlood alan hesabı 24 saat dinlendirme ve kalan adayları koruma
+Session'lar, proxy ayarları, gruplar, davet ayarları, Heartbeat, lisans ve yerel
+tercihler güncelleme sırasında korunur. Ayrıntılar `data/update.log` dosyasına
+yazılır.
 
-## Güncel davet akışı
+Kaynak kodla geliştirme sırasında güncelleme kurulmaz. Geçici olarak kapatmak için
+`PAWGRAM_SKIP_UPDATE=1` kullanılabilir.
 
-Panelde önizlenen adaylardan yalnızca açıkça seçilip onaylanan kişiler, iş oluşturulurken seçilen sabit session üzerinden hedef gruba davet edilir. Günlük kota varsayılan olarak 30'dur. Kota dolduğunda kalan adaylar bekler; FloodWait, PeerFlood veya kullanıcı gizlilik kısıtı gibi kritik Telegram cevaplarında iş durur ve başka session'a aktarılmaz. Başarılı davetler üye geçmişine kaydedilir.
+## Release notes ve sürüm geçmişi
 
-Her session için sabit proxy zorunludur. Proxy, Telegram işleminden önce test edilir. Bağlantı kurulamazsa session `proxy_error` durumuna alınır ve uygulama sunucunun ana IP adresi üzerinden bağlantı denemez. Ayarlar ekranındaki **Toplu Proxy Ekle** alanı `host:port`, `host:port:user:pass`, `user:pass@host:port` ve URL biçimlerini kabul eder.
+Sürüm geçmişi `RELEASE_NOTES.json` içinde tutulur ve Ayarlar ekranında gösterilir.
+Uygulama yeni bir sürümle ilk kez açıldığında modern sürüm notları penceresi bir kez
+gösterilir. Kullanıcı kapattıktan sonra aynı sürüm için yeniden açılmaz.
 
-## Kurulum
+## Müşteri release oluşturma
 
-PowerShell:
+Release yalnızca temiz ve commit edilmiş Git çalışma kopyasından oluşturulur.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\build_customer_release.ps1 `
+  -PythonPath .\.venv\Scripts\python.exe `
+  -DatabasePath .\data\console.db
+```
+
+Build sonunda müşteri ZIP'i içerik, Windows GUI subsystem, sürüm/publisher bilgisi,
+zorunlu yapılandırma ve geliştirici yolu sızıntılarına karşı doğrulanır.
+
+## İmzalı update paketi oluşturma
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\build_public_release.ps1 `
+  -PythonPath <python.exe> `
+  -SigningKeyPath .\license_server\data\signing_key.pem
+```
+
+Komut şunları üretir:
+
+- `releases/Pawgram-<version>-win64.zip`
+- `releases/pawgram-update.json`
+
+Private signing key hiçbir release paketine veya Git deposuna eklenmez.
+
+## Gerçek updater simülasyonu
+
+Aşağıdaki doğrulama başarılı kurulum/restart ve bozuk paket rollback yollarını
+çalıştırır; müşteri verilerini güncelleme öncesi ve sonrası karşılaştırır:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\verify_update_simulation.py `
+  --customer-zip .\releases\Pawgram-Customer-0.4.0-win64.zip `
+  --update-zip .\releases\Pawgram-0.4.0-win64.zip
+```
+
+## Kaynak kodla geliştirme
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install `
+  -r requirements.txt -r requirements-dev.txt
 Copy-Item .env.example .env
-```
-
-En kolay yöntem, uygulamadaki **Ayarlar → Telegram API bağlantısı** bölümüne [my.telegram.org](https://my.telegram.org) üzerinden aldığınız API ID ve API Hash değerlerini girmektir. Dosya düzenlemeniz gerekmez.
-
-İleri seviye sunucu kurulumu için değerler isteğe bağlı olarak `.env` dosyasından da verilebilir:
-
-```env
-TELEGRAM_API_ID=123456
-TELEGRAM_API_HASH=your_api_hash
-APP_SECRET_KEY=uzun-rastgele-ve-gizli-bir-deger
-```
-
-Uygulamayı başlatın:
-
-```powershell
 .\.venv\Scripts\python.exe run.py
 ```
 
-Ardından [http://127.0.0.1:8000](http://127.0.0.1:8000) adresini açın.
+Kaynak geliştirme sürümünde Telegram API bilgileri Ayarlar ekranından veya `.env`
+üzerinden verilebilir. Panel varsayılan olarak
+[http://127.0.0.1:8000](http://127.0.0.1:8000) adresinde açılır.
 
-İlk açılışta Pawgram sırasıyla:
+## Testler ve kalite kontrolleri
 
-1. Yönetici parolası oluşturmanızı ister.
-2. Telegram API bilgilerini panelden kaydetmenizi sağlar.
-3. İlk telefon hesabını bağlama ekranına yönlendirir.
-4. Çekilecek ve gönderilecek grupları doğrular.
-5. Adayları gerçek işlem yapmadan önizler.
-6. Sonuçların yönetici tarafından açıkça onaylanmasını ister.
-
-## Güvenlik davranışı
-
-- Telegram'ın bildirdiği FloodWait süresi değiştirilmeden uygulanır.
-- Bir iş, beklemeyi aşmak için otomatik olarak başka hesaba taşınmaz.
-- PeerFlood alan hesap 24 saat çalıştırılmaz.
-- Üç başarılı üye eklemeden sonra aynı session 30 dakika bekletilir.
-- Proxy yoksa veya çalışmıyorsa Telegram istemcisi başlatılmaz ve doğrudan IP bağlantısı yapılmaz.
-- API anahtarı, doğrulama kodu, 2FA parolası ve açık session verisi loglanmaz.
-- `.env` ve yerel veritabanı Git'e dahil edilmez.
-- Üretimde güçlü ve değişmeyen bir `APP_SECRET_KEY` kullanılmalıdır. Bu anahtar değiştirilirse mevcut şifrelenmiş session kayıtları okunamaz.
-
-## Proje yapısı
-
-```text
-app/
-  config.py             Ortam ayarları
-  database.py           SQLite şeması ve loglama
-  main.py               FastAPI uçları
-  schemas.py            İstek doğrulama modelleri
-  security.py           Session/telefon şifreleme
-  telegram_service.py   Telethon bağlantı katmanı
-static/
-  index.html             Yönetim paneli
-  styles.css             Koyu tema
-  app.js                 API bağlantıları ve arayüz akışları
+```powershell
+.\.venv\Scripts\python.exe -m ruff check app license_server scripts tests run.py
+.\.venv\Scripts\python.exe -m mypy app license_server scripts run.py --ignore-missing-imports
+.\.venv\Scripts\python.exe -m bandit -r app license_server scripts run.py -q -ll
+node --check static\app.js
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m pip_audit `
+  -r requirements.txt -r requirements-build.txt --progress-spinner off
 ```
 
-## Olası sonraki geliştirmeler
-
-1. Çok yöneticili rol sistemi ve ayrıntılı denetim kayıtları
-2. İsteğe bağlı PostgreSQL ve Redis dağıtımı
-3. Yönetici tarafından yapılandırılabilen yedek saklama politikası
+GitHub Actions aynı kontrolleri ve PyInstaller build'ini Windows üzerinde çalıştırır.

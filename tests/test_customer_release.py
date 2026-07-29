@@ -18,6 +18,17 @@ from scripts.verify_customer_release import verify_release_folder, verify_releas
 
 
 class CustomerReleaseTests(unittest.TestCase):
+    def test_customer_ui_describes_current_invite_rotation(self):
+        html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "FloodWait veya PeerFlood alan hesap beklemeye alınır ve sıradaki uygun hesapla devam edilir.",
+            html,
+        )
+        self.assertNotIn("FloodWait başka hesapla aşılmaz", html)
+        self.assertNotIn("Hata veya FloodWait içinde hesap değiştirilmez", html)
+
     def test_release_notes_are_hidden_on_first_install_and_shown_once_after_upgrade(self):
         settings: dict[str, str] = {}
 

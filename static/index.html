@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=20260729-customer-release-v1">
+  <link rel="stylesheet" href="/static/features.css?v=20260729-customer-release-v2">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -243,7 +243,7 @@
           <article class="stat-card"><small>HATALI</small><strong class="red" id="job-failed">0</strong></article>
         </div>
         <div class="panel">
-          <div class="section-heading"><div><h2>İş kuyruğu</h2><p>İşler başladıkları session'a bağlı kalır; FloodWait başka hesapla aşılmaz.</p></div><button class="primary" data-open-job>＋ Yeni iş</button></div>
+          <div class="section-heading"><div><h2>İş kuyruğu</h2><p>Kalan adaylar korunur; beklemeye alınan hesabın ardından sıradaki uygun hesapla devam edilir.</p></div><button class="primary" data-open-job>＋ Yeni iş</button></div>
           <div id="jobs-table" class="table-wrap"></div>
         </div>
       </section>
@@ -293,7 +293,7 @@
           <div class="panel" data-settings-section data-settings-keywords="koruma güvenlik floodwait round robin kota yönetici filtre önizleme">
             <div class="section-heading"><div><h2>Koruma kuralları</h2><p>Bu kurallar uygulamanın temel davranışıdır.</p></div></div>
             <div class="setting-row"><div><strong>FloodWait'e zorunlu uy</strong><small>Telegram'ın bildirdiği süre bitmeden işlem yapılmaz.</small></div><span class="toggle on"></span></div>
-            <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Session değişimi yalnızca işlem başlamadan önce, sabit kota kontrolüyle yapılır. Hata veya FloodWait içinde hesap değiştirilmez.</small></div><span class="toggle on"></span></div>
+            <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Davet hesapları sırayla kullanılır; FloodWait veya PeerFlood alan hesap beklemeye alınır ve sıradaki uygun hesapla devam edilir.</small></div><span class="toggle on"></span></div>
             <div class="setting-row"><div><strong>Yönetici ve geçmiş filtresi</strong><small>Kaynak grup yöneticileri ile daha önce onaylanan kullanıcılar yeni aday listelerine alınmaz.</small></div><span class="toggle on"></span></div>
             <div class="setting-row"><div><strong>Önizleme varsayılan</strong><small>Yeni işler önce gerçek işlem yapmayan test modunda açılır.</small></div><span class="toggle on"></span></div>
             <div class="api-form rotation-form">
@@ -579,6 +579,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=20260729-customer-release-v1"></script>
+  <script src="/static/app.js?v=20260729-customer-release-v2"></script>
 </body>
 </html>
