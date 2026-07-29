@@ -8,11 +8,11 @@
   </style>
 </head>
 <body><div class="shell">
-  <div class="head"><div><h1>🐾 Pawgram Lisans Yönetimi</h1><p>Haftalık, aylık ve üç aylık cihaz bağlı lisanslar</p></div><div class="admin-auth"><input id="admin-key" type="password" placeholder="Yönetici anahtarı" autocomplete="current-password"><button class="secondary" id="set-key">Bağlan</button></div></div>
+  <div class="head"><div><h1>🐾 Pawgram Lisans Yönetimi</h1><p>Günlük, dönemsel ve sınırsız cihaz bağlı lisanslar</p></div><div class="admin-auth"><input id="admin-key" type="password" placeholder="Yönetici anahtarı" autocomplete="current-password"><button class="secondary" id="set-key">Bağlan</button></div></div>
   <div class="panel">
     <div class="grid">
       <label>Müşteri / not<input id="customer" placeholder="Müşteri adı"></label>
-      <label>Süre<select id="duration"><option value="7">7 gün</option><option value="30">30 gün</option><option value="90">90 gün</option><option value="365">1 yıl</option></select></label>
+      <label>Süre<select id="duration"><option value="1">1 gün</option><option value="7">7 gün</option><option value="30">30 gün</option><option value="90">90 gün</option><option value="365">1 yıl</option><option value="-1">Sınırsız</option></select></label>
       <label>Cihaz sınırı<input id="devices" type="number" min="1" max="20" value="1"></label>
       <button id="create">Lisans oluştur</button>
     </div>
@@ -25,7 +25,8 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 async function api(path,options={}){const r=await fetch(path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||'İşlem başarısız');return d}
 async function loginAdmin(){const value=$('#admin-key').value;try{await api('/v1/admin/login',{method:'POST',body:JSON.stringify({admin_key:value})});$('#admin-key').value='';await load()}catch(e){$('#licenses').innerHTML=`<tr><td colspan="7" class="error">${esc(e.message)}</td></tr>`}}
 const date=v=>v?new Date(v).toLocaleString('tr-TR'):'İlk aktivasyonda başlar';
-async function load(){try{const rows=await api('/v1/admin/licenses');$('#licenses').innerHTML=rows.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.customer_label)}</td><td>••••-${esc(x.code_hint)}</td><td><span class="badge ${esc(x.status)}">${esc(x.status)}</span></td><td>${date(x.expires_at)}</td><td>${x.activation_count}/${x.max_devices}</td><td><div class="actions"><button class="secondary" onclick="extendLicense(${x.id})">+30 gün</button><button class="secondary" onclick="resetDevices(${x.id})">Cihaz sıfırla</button><button class="danger" onclick="revoke(${x.id})">İptal</button></div></td></tr>`).join('')||'<tr><td colspan="7">Henüz lisans yok.</td></tr>'}catch(e){$('#licenses').innerHTML=`<tr><td colspan="7" class="error">${esc(e.message)}</td></tr>`}}
+const licenseEnd=x=>x.duration_days===-1?'Sınırsız':date(x.expires_at);
+async function load(){try{const rows=await api('/v1/admin/licenses');$('#licenses').innerHTML=rows.map(x=>`<tr><td>#${x.id}</td><td>${esc(x.customer_label)}</td><td>••••-${esc(x.code_hint)}</td><td><span class="badge ${esc(x.status)}">${esc(x.status)}</span></td><td>${licenseEnd(x)}</td><td>${x.activation_count}/${x.max_devices}</td><td><div class="actions">${x.duration_days===-1?'':`<button class="secondary" onclick="extendLicense(${x.id})">+30 gün</button>`}<button class="secondary" onclick="resetDevices(${x.id})">Cihaz sıfırla</button><button class="danger" onclick="revoke(${x.id})">İptal</button></div></td></tr>`).join('')||'<tr><td colspan="7">Henüz lisans yok.</td></tr>'}catch(e){$('#licenses').innerHTML=`<tr><td colspan="7" class="error">${esc(e.message)}</td></tr>`}}
 async function createLicense(){try{const d=await api('/v1/admin/licenses',{method:'POST',body:JSON.stringify({customer_label:$('#customer').value,duration_days:Number($('#duration').value),max_devices:Number($('#devices').value)})});$('#result').classList.remove('hidden');$('#result').innerHTML=`Lisans kodu: <code>${d.license_key}</code><br><small>Bu kod tekrar gösterilmeyecektir. Güvenli biçimde müşteriye iletin.</small>`;await load()}catch(e){alert(e.message)}}
 async function revoke(id){if(confirm('Bu lisans iptal edilsin mi?')){await api(`/v1/admin/licenses/${id}/revoke`,{method:'POST'});load()}}
 async function extendLicense(id){await api(`/v1/admin/licenses/${id}/extend`,{method:'POST',body:JSON.stringify({duration_days:30})});load()}

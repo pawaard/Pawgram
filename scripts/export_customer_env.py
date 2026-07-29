@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,9 @@ def env_value(value: object) -> str:
 
 
 telegram_api_id, telegram_api_hash, default_proxy = load_customer_configuration()
+proxy_revision = hashlib.sha256(
+    json.dumps(default_proxy, ensure_ascii=False, sort_keys=True).encode("utf-8")
+).hexdigest()[:24]
 lines = [
     "APP_ENV=production",
     "APP_PORT=8000",
@@ -45,6 +49,7 @@ lines = [
     f"DEFAULT_PROXY_PORT={env_value(default_proxy['port'])}",
     f"DEFAULT_PROXY_USERNAME={env_value(default_proxy.get('username'))}",
     f"DEFAULT_PROXY_PASSWORD={env_value(default_proxy.get('password'))}",
+    f"DEFAULT_PROXY_REVISION={proxy_revision}",
 ]
 args.output.parent.mkdir(parents=True, exist_ok=True)
 args.output.write_text("\n".join(lines) + "\n", encoding="utf-8")

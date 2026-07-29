@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     default_proxy_port: int | None = Field(default=None, ge=1, le=65535)
     default_proxy_username: str | None = None
     default_proxy_password: str | None = None
+    default_proxy_revision: str | None = None
     database_path: Path = APP_DIR / "data" / "console.db"
     license_required: bool = False
     license_server_url: str = "http://127.0.0.1:8010"

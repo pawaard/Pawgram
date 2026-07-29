@@ -31,8 +31,12 @@ class ActivitySafetyTests(unittest.TestCase):
                 """
                 INSERT INTO telegram_sessions(
                     label, phone_masked, phone_encrypted, session_encrypted,
-                    display_name, status, created_at, updated_at
-                ) VALUES (?, '+90 ***', 'encrypted', 'session', ?, 'active', ?, ?)
+                    display_name, status, proxy_enabled, proxy_type, proxy_host,
+                    proxy_port, proxy_last_status, created_at, updated_at
+                ) VALUES (
+                    ?, '+90 ***', 'encrypted', 'session', ?, 'active', 1,
+                    'http', 'proxy.test', 10000, 'success', ?, ?
+                )
                 """,
                 (label, label, now, now),
             )
@@ -128,7 +132,7 @@ class ActivitySafetyTests(unittest.TestCase):
         self.assertEqual(session["status"], "batch_wait")
         self.assertEqual(session["batch_cooldown_until"], cooldown_until)
 
-    def test_unavailable_preferred_session_falls_back_and_logs_every_candidate(self):
+    def test_invite_flood_wait_does_not_block_preferred_activity_session(self):
         from app.database import get_connection
         from app.telegram_service import _activity_session_candidates
 
@@ -145,7 +149,7 @@ class ActivitySafetyTests(unittest.TestCase):
                 (flood_until, preferred_id),
             )
 
-        self.assertEqual(_activity_session_candidates(preferred_id), [ready_id])
+        self.assertEqual(_activity_session_candidates(preferred_id), [preferred_id])
         with get_connection() as connection:
             logs = connection.execute(
                 """
@@ -159,8 +163,8 @@ class ActivitySafetyTests(unittest.TestCase):
         self.assertTrue(
             any(
                 row["session_id"] == preferred_id
-                and "RED" in row["message"]
-                and "FloodWait devam ediyor" in row["message"]
+                and "KABUL" in row["message"]
+                and "aktivite taramasını önceden engellemez" in row["message"]
                 for row in logs
             )
         )
@@ -172,9 +176,39 @@ class ActivitySafetyTests(unittest.TestCase):
                 for row in logs
             )
         )
-        self.assertTrue(
-            any("Round-Robin ile devam ediyor" in row["message"] for row in logs)
-        )
+        self.assertTrue(any("tercih edilen session" in row["message"] for row in logs))
+
+    def test_proxy_error_is_rejected_with_exact_reason(self):
+        from app.database import get_connection
+        from app.telegram_service import _activity_session_candidates
+
+        failed_id = self._add_session("Proxy hatalı")
+        ready_id = self._add_session("Hazır")
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='proxy_error', proxy_last_status='failed',
+                    proxy_last_error='407 authentication failed'
+                WHERE id=?
+                """,
+                (failed_id,),
+            )
+
+        self.assertEqual(_activity_session_candidates(failed_id), [ready_id])
+        with get_connection() as connection:
+            failed_log = connection.execute(
+                """
+                SELECT message FROM system_logs
+                WHERE category='activity_selector' AND session_id=?
+                  AND message LIKE '%RED%'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (failed_id,),
+            ).fetchone()
+        self.assertIn("RED", failed_log["message"])
+        self.assertIn("son proxy testi başarısız", failed_log["message"])
+        self.assertIn("407 authentication failed", failed_log["message"])
 
     def test_access_error_keeps_the_real_telegram_error(self):
         from app.telegram_service import _activity_access_error

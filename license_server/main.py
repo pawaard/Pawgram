@@ -29,6 +29,11 @@ from license_server.schemas import (
 from license_server.signing import sign_payload, verify_token
 
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+UNLIMITED_DURATION_DAYS = -1
+# Existing Pawgram 0.4.4 clients require a numeric license_exp claim. Year
+# 3000 is supported by the Windows runtime and acts only as a compatibility
+# ceiling; the server remains authoritative through the unlimited flag.
+UNLIMITED_LICENSE_EXPIRY = datetime(3000, 1, 1, tzinfo=UTC)
 ACTIVATION_LIMITER = InMemoryRateLimiter(limit=10, window_seconds=60)
 ADMIN_LOGIN_LIMITER = InMemoryRateLimiter(limit=5, window_seconds=60)
 
@@ -127,18 +132,35 @@ def parse_time(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def license_is_unlimited(record) -> bool:
+    return bool(record and int(record["duration_days"]) == UNLIMITED_DURATION_DAYS)
+
+
+def public_license_expiry(record) -> str | None:
+    return None if license_is_unlimited(record) else record["expires_at"]
+
+
 def license_is_usable(record) -> None:
     if not record or record["status"] != "active":
         raise HTTPException(status_code=403, detail="Lisans geçersiz veya iptal edilmiş.")
-    if not record["expires_at"]:
+    if not record["starts_at"]:
         raise HTTPException(status_code=403, detail="Lisans henüz başlatılmamış.")
+    if license_is_unlimited(record):
+        return
+    if not record["expires_at"]:
+        raise HTTPException(status_code=403, detail="Lisans bitiş tarihi bulunamadı.")
     if parse_time(record["expires_at"]) <= datetime.now(UTC):
         raise HTTPException(status_code=403, detail="Lisans süresi dolmuş.")
 
 
 def issue_lease(license_record, activation_id: int, device_id: str) -> tuple[str, str]:
     settings = get_license_server_settings()
-    license_expiry = parse_time(license_record["expires_at"])
+    unlimited = license_is_unlimited(license_record)
+    license_expiry = (
+        UNLIMITED_LICENSE_EXPIRY
+        if unlimited
+        else parse_time(license_record["expires_at"])
+    )
     lease_expiry = min(datetime.now(UTC) + timedelta(hours=settings.lease_hours), license_expiry)
     payload = {
         "v": 1,
@@ -149,6 +171,7 @@ def issue_lease(license_record, activation_id: int, device_id: str) -> tuple[str
         "iat": int(datetime.now(UTC).timestamp()),
         "exp": int(lease_expiry.timestamp()),
         "license_exp": int(license_expiry.timestamp()),
+        "unlimited": unlimited,
         "nonce": secrets.token_hex(12),
     }
     return sign_payload(payload), lease_expiry.isoformat()
@@ -214,7 +237,12 @@ def create_license(payload: LicenseCreateRequest):
                     ),
                 )
                 license_id = cursor.lastrowid
-            add_audit("license_created", license_id, None, f"{payload.duration_days} days")
+            duration_detail = (
+                "unlimited"
+                if payload.duration_days == UNLIMITED_DURATION_DAYS
+                else f"{payload.duration_days} days"
+            )
+            add_audit("license_created", license_id, None, duration_detail)
             return {
                 "id": license_id,
                 "license_key": code,
@@ -263,6 +291,8 @@ def extend_license(license_id: int, payload: LicenseExtendRequest):
         record = connection.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
         if not record:
             raise HTTPException(status_code=404, detail="Lisans bulunamadı.")
+        if license_is_unlimited(record):
+            raise HTTPException(status_code=409, detail="Sınırsız lisansın süresi uzatılamaz.")
         if record["expires_at"]:
             current_expiry = parse_time(record["expires_at"])
             base = max(current_expiry, datetime.now(UTC))
@@ -306,12 +336,21 @@ def activate(payload: ActivationRequest, request: Request):
         license_record = connection.execute(
             "SELECT * FROM licenses WHERE code_hash=?", (normalized_hash,)
         ).fetchone()
-        if license_record and license_record["status"] == "active" and not license_record["expires_at"]:
+        if license_record and license_record["status"] == "active" and not license_record["starts_at"]:
             starts_at = datetime.now(UTC)
-            expires_at = starts_at + timedelta(days=license_record["duration_days"])
+            expires_at = (
+                None
+                if license_is_unlimited(license_record)
+                else starts_at + timedelta(days=license_record["duration_days"])
+            )
             connection.execute(
                 "UPDATE licenses SET starts_at=?, expires_at=?, updated_at=? WHERE id=?",
-                (starts_at.isoformat(), expires_at.isoformat(), utc_now(), license_record["id"]),
+                (
+                    starts_at.isoformat(),
+                    expires_at.isoformat() if expires_at else None,
+                    utc_now(),
+                    license_record["id"],
+                ),
             )
             license_record = connection.execute(
                 "SELECT * FROM licenses WHERE id=?", (license_record["id"],)
@@ -364,7 +403,7 @@ def activate(payload: ActivationRequest, request: Request):
         "valid": True,
         "lease_token": token,
         "lease_expires_at": lease_expiry,
-        "license_expires_at": license_record["expires_at"],
+        "license_expires_at": public_license_expiry(license_record),
         "customer_label": license_record["customer_label"],
         "server_time": utc_now(),
     }
@@ -398,7 +437,7 @@ def validate(payload: ValidationRequest):
         "valid": True,
         "lease_token": token,
         "lease_expires_at": lease_expiry,
-        "license_expires_at": license_record["expires_at"],
+        "license_expires_at": public_license_expiry(license_record),
         "customer_label": license_record["customer_label"],
         "server_time": utc_now(),
     }

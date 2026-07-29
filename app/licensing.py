@@ -98,6 +98,7 @@ def local_license_status() -> dict:
     try:
         claims = _verify_lease(token)
         now = int(time.time())
+        unlimited = claims.get("unlimited") is True
         last_server_time = get_app_setting("license_last_server_time")
         if last_server_time:
             trusted_time = datetime.fromisoformat(last_server_time)
@@ -117,7 +118,7 @@ def local_license_status() -> dict:
                 "status": "lease_expired",
                 "message": "Lisansın çevrimdışı kullanım süresi doldu. İnternet bağlantısı gerekli.",
             }
-        if int(claims["license_exp"]) <= now:
+        if not unlimited and int(claims["license_exp"]) <= now:
             return {
                 "required": True,
                 "valid": False,
@@ -128,10 +129,15 @@ def local_license_status() -> dict:
             "required": True,
             "valid": True,
             "status": "active",
-            "message": "Lisans aktif.",
+            "message": "Lisans aktif (sınırsız)." if unlimited else "Lisans aktif.",
             "lease_token": token,
             "lease_expires_at": datetime.fromtimestamp(int(claims["exp"]), UTC).isoformat(),
-            "license_expires_at": datetime.fromtimestamp(int(claims["license_exp"]), UTC).isoformat(),
+            "license_expires_at": (
+                None
+                if unlimited
+                else datetime.fromtimestamp(int(claims["license_exp"]), UTC).isoformat()
+            ),
+            "unlimited": unlimited,
             "customer_label": get_app_setting("license_customer_label") or "",
         }
     except (ValueError, KeyError, TypeError, json.JSONDecodeError, OSError):

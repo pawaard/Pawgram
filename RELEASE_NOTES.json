@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.4.5",
+    "release_date": "2026-07-30",
+    "title": "Proxy ve aktivite taraması güvenilirliği",
+    "changes": [
+      "Aktivite taraması davet işine ait FloodWait ve batch bekleme durumlarından ayrıldı",
+      "Tarama session seçimi her adayın durumunu ve kabul veya ret nedenini ayrıntılı kaydediyor",
+      "Proxy hatalı veya eksik session'lar ana IP'ye düşmeden güvenli biçimde reddediliyor",
+      "Özel müşteri paketi yeni proxy revizyonunu telefonları, Telegram session'larını ve ayarları silmeden uyguluyor",
+      "Tarama, üye hazırlama, hedef yetkisi ve round-robin davet ön kontrolü için gerçek Telegram doğrulama aracı eklendi",
+      "Lisans paneline 1 günlük ve sınırsız lisans seçenekleri eklendi"
+    ]
+  },
+  {
     "version": "0.4.4",
     "release_date": "2026-07-29",
     "title": "Aktarım akışı ve modal güvenilirliği",

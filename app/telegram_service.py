@@ -65,6 +65,7 @@ from app.session_operation import (
 DEFAULT_DAILY_ACTIVITY_QUOTA = 30
 PENDING_AUTH_TTL_MINUTES = 15
 DEFAULT_LOGIN_PROXY_SETTING = "default_login_proxy_encrypted"
+DEFAULT_LOGIN_PROXY_REVISION_SETTING = "default_login_proxy_revision"
 
 
 class GroupJoinPending(RuntimeError):
@@ -182,6 +183,73 @@ def _save_default_login_proxy(config: dict) -> None:
         "password": config.get("password") or None,
     }
     set_app_setting(DEFAULT_LOGIN_PROXY_SETTING, encrypt(json.dumps(value)))
+
+
+def sync_customer_release_proxy() -> int:
+    """Apply a private package proxy revision without replacing Telegram session data."""
+    settings = get_settings()
+    revision = (settings.default_proxy_revision or "").strip()
+    if not settings.customer_release or not revision:
+        return 0
+    if get_app_setting(DEFAULT_LOGIN_PROXY_REVISION_SETTING) == revision:
+        return 0
+    if not settings.default_proxy_host or not settings.default_proxy_port:
+        raise RuntimeError("Müşteri proxy revizyonunda host ve port zorunludur.")
+
+    config = _proxy_config_from_values(
+        settings.default_proxy_type,
+        settings.default_proxy_host,
+        settings.default_proxy_port,
+        settings.default_proxy_username,
+        settings.default_proxy_password,
+    )
+    _save_default_login_proxy(config)
+    now = utc_now()
+    with get_connection() as connection:
+        updated = connection.execute(
+            """
+            UPDATE telegram_sessions
+            SET proxy_enabled=1, proxy_type=?, proxy_host=?, proxy_port=?,
+                proxy_username_encrypted=?, proxy_password_encrypted=?,
+                proxy_last_status=NULL, proxy_latency_ms=NULL,
+                proxy_last_error=NULL, proxy_last_test_at=NULL,
+                status=CASE
+                    WHEN status='flood_wait' AND flood_wait_until IS NOT NULL
+                         AND flood_wait_until>? THEN 'flood_wait'
+                    WHEN status='batch_wait' AND batch_cooldown_until IS NOT NULL
+                         AND batch_cooldown_until>? THEN 'batch_wait'
+                    ELSE 'proxy_pending'
+                END,
+                last_error=CASE
+                    WHEN status='flood_wait' AND flood_wait_until IS NOT NULL
+                         AND flood_wait_until>? THEN last_error
+                    WHEN status='batch_wait' AND batch_cooldown_until IS NOT NULL
+                         AND batch_cooldown_until>? THEN last_error
+                    ELSE NULL
+                END,
+                updated_at=?
+            WHERE session_encrypted IS NOT NULL
+            """,
+            (
+                config["proxy_type"],
+                config["addr"],
+                config["port"],
+                encrypt(config["username"]) if config.get("username") else None,
+                encrypt(config["password"]) if config.get("password") else None,
+                now,
+                now,
+                now,
+                now,
+                now,
+            ),
+        ).rowcount
+    set_app_setting(DEFAULT_LOGIN_PROXY_REVISION_SETTING, revision)
+    add_log(
+        "success",
+        "proxy",
+        f"Müşteri paketindeki proxy revizyonu uygulandı; {updated} session yeniden doğrulama bekliyor.",
+    )
+    return updated
 
 
 def save_default_login_proxy(
@@ -988,12 +1056,13 @@ async def _resolve_or_request_group_access(
 def _activity_session_candidates(requested_session_id: int | None) -> list[int]:
     today = datetime.now(UTC).date().isoformat()
     quota = max(1, int(get_app_setting("activity_daily_quota") or DEFAULT_DAILY_ACTIVITY_QUOTA))
-    current_time = datetime.now(UTC)
     with get_connection() as connection:
         sessions = connection.execute(
             """
-            SELECT s.id, s.label, s.status, s.flood_wait_until,
-                   s.batch_cooldown_until,
+            SELECT s.id, s.label, s.session_encrypted, s.status,
+                   s.flood_wait_until, s.batch_cooldown_until,
+                   s.proxy_enabled, s.proxy_type, s.proxy_host, s.proxy_port,
+                   s.proxy_last_status, s.proxy_last_error,
                    COALESCE(u.operation_count, 0) operation_count,
                    u.last_used_at
             FROM telegram_sessions s
@@ -1010,18 +1079,36 @@ def _activity_session_candidates(requested_session_id: int | None) -> list[int]:
     for row in sessions:
         status = str(row.get("status") or "").lower()
         reasons: list[str] = []
-        eligible = status in {"active", "proxy_pending", "batch_wait"}
+        eligible = status in {"active", "proxy_pending", "batch_wait", "flood_wait"}
         if status == "flood_wait":
-            wait_until = _session_wait_time(row.get("flood_wait_until"))
-            if wait_until is not None and wait_until <= current_time:
-                eligible = True
-                reasons.append("FloodWait süresi dolmuş")
-            else:
-                reasons.append(
-                    f"FloodWait devam ediyor: {row.get('flood_wait_until') or 'bitiş zamanı yok'}"
-                )
-        elif not eligible:
+            reasons.append(
+                "invite/FloodWait session durumu aktivite taramasını önceden engellemez; "
+                "gerçek tarama isteği Telegram tarafından ayrıca doğrulanır"
+            )
+        elif status == "batch_wait":
+            reasons.append("invite batch beklemesi aktivite taramasını engellemez")
+        elif status == "proxy_pending":
+            reasons.append("proxy çalışma anında gerçek Telegram bağlantısıyla doğrulanacak")
+        elif status == "active":
+            reasons.append("status aktivite taramasına uygun")
+        else:
             reasons.append(f"durum aktivite taramasına uygun değil: {status or 'boş'}")
+
+        if not row.get("session_encrypted"):
+            eligible = False
+            reasons.append("Telegram session verisi bulunmuyor")
+        if not row.get("proxy_enabled"):
+            eligible = False
+            reasons.append("session proxy etkin değil; ana IP kullanımı yasak")
+        elif not row.get("proxy_host") or not row.get("proxy_port"):
+            eligible = False
+            reasons.append("session proxy host/port ayarı eksik")
+        if str(row.get("proxy_last_status") or "").lower() == "failed":
+            eligible = False
+            reasons.append(
+                "son proxy testi başarısız"
+                + (f": {row.get('proxy_last_error')}" if row.get("proxy_last_error") else "")
+            )
 
         if eligible:
             status_eligible.append(row)

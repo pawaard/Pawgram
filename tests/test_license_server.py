@@ -116,6 +116,60 @@ class LicenseServerTests(unittest.TestCase):
         response = self.client.get("/v1/admin/licenses", headers={"X-Admin-Key": "wrong"})
         self.assertEqual(response.status_code, 401)
 
+    def test_one_day_and_unlimited_licenses(self):
+        one_day = self.client.post(
+            "/v1/admin/licenses",
+            headers=self.headers,
+            json={"customer_label": "One day", "duration_days": 1, "max_devices": 1},
+        )
+        self.assertEqual(one_day.status_code, 200)
+
+        unlimited = self.client.post(
+            "/v1/admin/licenses",
+            headers=self.headers,
+            json={"customer_label": "Unlimited", "duration_days": -1, "max_devices": 1},
+        )
+        self.assertEqual(unlimited.status_code, 200)
+        license_data = unlimited.json()
+        activation = self.client.post(
+            "/v1/activate",
+            json={
+                "license_key": license_data["license_key"],
+                "device_id": "u" * 64,
+                "installation_id": "installation-unlimited-1234",
+                "app_version": "0.4.4",
+            },
+        )
+        self.assertEqual(activation.status_code, 200)
+        self.assertIsNone(activation.json()["license_expires_at"])
+        claims = self.main.verify_token(activation.json()["lease_token"])
+        self.assertTrue(claims["unlimited"])
+
+        validation = self.client.post(
+            "/v1/validate",
+            json={
+                "lease_token": activation.json()["lease_token"],
+                "device_id": "u" * 64,
+                "app_version": "0.4.4",
+            },
+        )
+        self.assertEqual(validation.status_code, 200)
+        self.assertIsNone(validation.json()["license_expires_at"])
+
+        extension = self.client.post(
+            f"/v1/admin/licenses/{license_data['id']}/extend",
+            headers=self.headers,
+            json={"duration_days": 30},
+        )
+        self.assertEqual(extension.status_code, 409)
+
+        invalid_zero = self.client.post(
+            "/v1/admin/licenses",
+            headers=self.headers,
+            json={"customer_label": "Invalid", "duration_days": 0, "max_devices": 1},
+        )
+        self.assertEqual(invalid_zero.status_code, 422)
+
     def test_concurrent_activation_cannot_exceed_device_limit(self):
         created = self.client.post(
             "/v1/admin/licenses",

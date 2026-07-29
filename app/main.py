@@ -93,6 +93,7 @@ from app.telegram_service import (
     resolve_group,
     save_default_login_proxy,
     start_login,
+    sync_customer_release_proxy,
     test_default_login_proxy,
     test_session_proxy,
     verify_login,
@@ -278,6 +279,7 @@ async def invite_scheduler_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
+    sync_customer_release_proxy()
     initialize_release_tracking(APP_VERSION)
     stale_session_locks = clear_stale_session_operations()
     with get_connection() as connection:

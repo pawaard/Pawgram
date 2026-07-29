@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class AdminLoginRequest(BaseModel):
@@ -7,8 +7,15 @@ class AdminLoginRequest(BaseModel):
 
 class LicenseCreateRequest(BaseModel):
     customer_label: str = Field(min_length=2, max_length=160)
-    duration_days: int = Field(ge=1, le=3650)
+    duration_days: int = Field(ge=-1, le=3650)
     max_devices: int = Field(default=1, ge=1, le=20)
+
+    @field_validator("duration_days")
+    @classmethod
+    def validate_duration_days(cls, value: int) -> int:
+        if value == 0:
+            raise ValueError("Lisans süresi en az 1 gün veya sınırsız olmalıdır.")
+        return value
 
 
 class LicenseExtendRequest(BaseModel):

@@ -150,6 +150,61 @@ class LoginProxyTests(unittest.TestCase):
         self.assertEqual(connector.await_args.args[2]["password"], "proxy-pass")
         fake_client.disconnect.assert_awaited_once()
 
+    def test_customer_proxy_revision_updates_only_proxy_fields(self):
+        from app.database import get_app_setting, get_connection, utc_now
+        from app.security import decrypt
+        from app.telegram_service import sync_customer_release_proxy
+
+        now = utc_now()
+        flood_until = "2999-01-01T00:00:00+00:00"
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    status, flood_wait_until, proxy_enabled, proxy_type,
+                    proxy_host, proxy_port, created_at, updated_at
+                ) VALUES
+                  ('Waiting', '+90 ***', 'phone-1', 'session-1', 'flood_wait', ?,
+                   1, 'http', 'old.proxy', 10000, ?, ?),
+                  ('Ready', '+90 ***', 'phone-2', 'session-2', 'active', NULL,
+                   1, 'http', 'old.proxy', 10000, ?, ?)
+                """,
+                (flood_until, now, now, now, now),
+            )
+
+        environment = {
+            "CUSTOMER_RELEASE": "true",
+            "DEFAULT_PROXY_TYPE": "http",
+            "DEFAULT_PROXY_HOST": "new.proxy",
+            "DEFAULT_PROXY_PORT": "10003",
+            "DEFAULT_PROXY_USERNAME": "new-user",
+            "DEFAULT_PROXY_PASSWORD": "new-pass",
+            "DEFAULT_PROXY_REVISION": "proxy-revision-2",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            get_settings.cache_clear()
+            self.assertEqual(sync_customer_release_proxy(), 2)
+            self.assertEqual(sync_customer_release_proxy(), 0)
+        get_settings.cache_clear()
+
+        with get_connection() as connection:
+            sessions = connection.execute(
+                "SELECT * FROM telegram_sessions ORDER BY id"
+            ).fetchall()
+        self.assertEqual(sessions[0]["status"], "flood_wait")
+        self.assertEqual(sessions[0]["flood_wait_until"], flood_until)
+        self.assertEqual(sessions[1]["status"], "proxy_pending")
+        self.assertTrue(all(row["proxy_host"] == "new.proxy" for row in sessions))
+        self.assertTrue(all(row["proxy_port"] == 10003 for row in sessions))
+        self.assertTrue(
+            all(decrypt(row["proxy_password_encrypted"]) == "new-pass" for row in sessions)
+        )
+        self.assertEqual(
+            get_app_setting("default_login_proxy_revision"),
+            "proxy-revision-2",
+        )
+
     def test_real_telegram_probe_falls_back_to_http(self):
         from app.telegram_service import _connect_telegram_through_proxy
 
