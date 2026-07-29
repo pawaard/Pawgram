@@ -49,7 +49,7 @@ def _machine_material() -> str:
 
 
 def device_id() -> str:
-    return hashlib.sha256(f"pawgram:v1:{_machine_material()}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"pawgram:v1:{_machine_material()}".encode()).hexdigest()
 
 
 def app_version() -> str:
@@ -61,9 +61,11 @@ def app_version() -> str:
 
 def _verify_lease(token: str) -> dict:
     encoded, signature = token.split(".", 1)
-    public_key: Ed25519PublicKey = serialization.load_pem_public_key(
+    public_key = serialization.load_pem_public_key(
         LICENSE_PUBLIC_KEY_PEM
     )
+    if not isinstance(public_key, Ed25519PublicKey):
+        raise TypeError("Lisans doğrulama anahtarı Ed25519 biçiminde değil.")
     try:
         public_key.verify(_decode(signature), encoded.encode("ascii"))
     except InvalidSignature as error:

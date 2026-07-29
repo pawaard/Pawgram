@@ -1,20 +1,20 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 SERVER_DIR = Path(__file__).resolve().parent
 
 
 class LicenseServerSettings(BaseSettings):
-    admin_api_key: str
+    admin_api_key: str = ""
     database_path: Path = SERVER_DIR / "data" / "licenses.db"
     signing_key_path: Path = SERVER_DIR / "data" / "signing_key.pem"
     public_key_path: Path = SERVER_DIR / "public_key.pem"
-    lease_hours: int = 24
+    lease_hours: int = Field(default=24, ge=1, le=168)
     host: str = "127.0.0.1"
-    port: int = 8010
+    port: int = Field(default=8010, ge=1, le=65535)
     cookie_secure: bool = False
 
     model_config = SettingsConfigDict(

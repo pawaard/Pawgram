@@ -2,7 +2,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
-
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "assets" / "Pawgram_Satis_Afisi.png"
 WIDTH, HEIGHT = 1600, 2000
@@ -48,6 +47,7 @@ def icon(draw, kind, x, y, color):
 
 image = Image.new("RGB", (WIDTH, HEIGHT), "#06101e")
 pixels = image.load()
+assert pixels is not None
 for y in range(HEIGHT):
     t = y / HEIGHT
     for x in range(WIDTH):

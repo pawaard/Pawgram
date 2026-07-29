@@ -2,7 +2,6 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
 ASSETS.mkdir(parents=True, exist_ok=True)
@@ -35,4 +34,3 @@ ico_path = ASSETS / "pawgram.ico"
 image.save(png_path)
 image.save(ico_path, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 print(ico_path)
-

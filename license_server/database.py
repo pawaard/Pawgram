@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 
 from license_server.config import get_license_server_settings
 
-
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS licenses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,13 +54,16 @@ def utc_now() -> str:
 def get_connection():
     path = get_license_server_settings().database_path
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, timeout=5.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute("PRAGMA busy_timeout=5000")
     try:
         yield connection
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
     finally:
         connection.close()
 

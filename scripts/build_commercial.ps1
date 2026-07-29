@@ -45,15 +45,14 @@ try {
     $editionSource = $editionSource -replace "COMMERCIAL_EDITION = False", "COMMERCIAL_EDITION = True"
     Set-Content -LiteralPath $editionPath -Value $editionSource -Encoding UTF8
 
-    $existingPythonPath = $env:PYTHONPATH
-    $env:PYTHONPATH = Join-Path $projectRoot ".packages"
-    try {
-        & $PythonPath -m PyInstaller --noconfirm (Join-Path $sourceRoot "Pawgram.spec") --distpath (Join-Path $stageRoot "dist") --workpath (Join-Path $stageRoot "build")
-        if ($LASTEXITCODE -ne 0) { throw "Ticari EXE derlenemedi." }
-    }
-    finally {
-        $env:PYTHONPATH = $existingPythonPath
-    }
+    $venvRoot = Join-Path $stageRoot "build-venv"
+    & $PythonPath -m venv $venvRoot
+    if ($LASTEXITCODE -ne 0) { throw "Temiz derleme ortamı oluşturulamadı." }
+    $venvPython = Join-Path $venvRoot "Scripts\python.exe"
+    & $venvPython -m pip install --disable-pip-version-check -r (Join-Path $sourceRoot "requirements.txt") -r (Join-Path $sourceRoot "requirements-build.txt")
+    if ($LASTEXITCODE -ne 0) { throw "Sabitlenmiş derleme bağımlılıkları kurulamadı." }
+    & $venvPython -m PyInstaller --noconfirm (Join-Path $sourceRoot "Pawgram.spec") --distpath (Join-Path $stageRoot "dist") --workpath (Join-Path $stageRoot "build")
+    if ($LASTEXITCODE -ne 0) { throw "Ticari EXE derlenemedi." }
 
     $version = (Get-Content -LiteralPath (Join-Path $sourceRoot "VERSION") -Raw).Trim()
     $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"

@@ -1,11 +1,10 @@
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from app.config import get_settings
-
 
 SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -138,6 +137,93 @@ CREATE TABLE IF NOT EXISTS activity_results (
     FOREIGN KEY(scan_id) REFERENCES activity_scans(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS group_access_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_ref TEXT NOT NULL,
+    purpose TEXT NOT NULL DEFAULT 'source',
+    status TEXT NOT NULL DEFAULT 'queued',
+    min_delay_seconds INTEGER NOT NULL DEFAULT 15,
+    max_delay_seconds INTEGER NOT NULL DEFAULT 30,
+    total_count INTEGER NOT NULL DEFAULT 0,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    ready_count INTEGER NOT NULL DEFAULT 0,
+    joined_count INTEGER NOT NULL DEFAULT 0,
+    pending_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    next_action_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS group_access_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    session_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    reason TEXT,
+    resolved_group_id INTEGER,
+    resolved_group_title TEXT,
+    resolved_group_username TEXT,
+    can_invite_users INTEGER,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE(batch_id, session_id),
+    FOREIGN KEY(batch_id) REFERENCES group_access_batches(id) ON DELETE CASCADE,
+    FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS session_operation_locks (
+    session_id INTEGER PRIMARY KEY,
+    operation_type TEXT NOT NULL,
+    operation_key TEXT NOT NULL,
+    operation_label TEXT NOT NULL,
+    owner_token TEXT NOT NULL,
+    acquired_at TEXT NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS session_health_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_ref TEXT,
+    target_ref TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    total_count INTEGER NOT NULL DEFAULT 0,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    ready_count INTEGER NOT NULL DEFAULT 0,
+    warning_count INTEGER NOT NULL DEFAULT 0,
+    failed_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS session_health_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    session_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued',
+    proxy_ok INTEGER,
+    session_ok INTEGER,
+    source_access INTEGER,
+    target_access INTEGER,
+    target_can_invite INTEGER,
+    latency_ms INTEGER,
+    busy_operation TEXT,
+    reason TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    UNIQUE(batch_id, session_id),
+    FOREIGN KEY(batch_id) REFERENCES session_health_batches(id) ON DELETE CASCADE,
+    FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS session_usage_daily (
     session_id INTEGER NOT NULL,
     usage_date TEXT NOT NULL,
@@ -168,11 +254,26 @@ CREATE TABLE IF NOT EXISTS member_history (
     last_seen_at TEXT NOT NULL,
     FOREIGN KEY(first_job_id) REFERENCES transfer_jobs(id)
 );
+
+CREATE TABLE IF NOT EXISTS heartbeat_session_status (
+    session_id INTEGER PRIMARY KEY,
+    last_heartbeat_at TEXT,
+    last_success_at TEXT,
+    last_failure_at TEXT,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    current_status TEXT NOT NULL DEFAULT 'never_run',
+    last_error TEXT,
+    next_heartbeat_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(session_id) REFERENCES telegram_sessions(id) ON DELETE CASCADE
+);
 """
 
 
 JOB_COLUMNS = {
     "scheduled_at": "TEXT",
+    "resume_at": "TEXT",
     "working_start": "TEXT NOT NULL DEFAULT '09:00'",
     "working_end": "TEXT NOT NULL DEFAULT '22:00'",
     "requires_approval": "INTEGER NOT NULL DEFAULT 1",
@@ -219,6 +320,20 @@ SESSION_COLUMNS = {
     "proxy_last_test_at": "TEXT",
     "batch_success_count": "INTEGER NOT NULL DEFAULT 0",
     "batch_cooldown_until": "TEXT",
+    "invite_batch_limit": "INTEGER NOT NULL DEFAULT 3",
+    "invite_cooldown_minutes": "INTEGER NOT NULL DEFAULT 20",
+}
+
+
+PENDING_AUTH_COLUMNS = {
+    "direct_connection_allowed": "INTEGER NOT NULL DEFAULT 0",
+    "proxy_type": "TEXT",
+    "proxy_host": "TEXT",
+    "proxy_port": "INTEGER",
+    "proxy_username_encrypted": "TEXT",
+    "proxy_password_encrypted": "TEXT",
+    "proxy_latency_ms": "INTEGER",
+    "proxy_tested_at": "TEXT",
 }
 
 
@@ -226,14 +341,15 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def dict_factory(cursor: sqlite3.Cursor, row: sqlite3.Row) -> dict:
+def dict_factory(cursor: sqlite3.Cursor, row: tuple[object, ...]) -> dict[str, object]:
     return {description[0]: row[index] for index, description in enumerate(cursor.description)}
 
 
 def initialize_database() -> None:
     path = Path(get_settings().database_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    with sqlite3.connect(path, timeout=5.0) as connection:
+        connection.execute("PRAGMA busy_timeout=5000")
         connection.executescript(SCHEMA)
         existing_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(transfer_jobs)").fetchall()
@@ -265,13 +381,20 @@ def initialize_database() -> None:
         for column, definition in SESSION_COLUMNS.items():
             if column not in existing_session_columns:
                 connection.execute(f"ALTER TABLE telegram_sessions ADD COLUMN {column} {definition}")
+        existing_pending_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(pending_auth)").fetchall()
+        }
+        for column, definition in PENDING_AUTH_COLUMNS.items():
+            if column not in existing_pending_columns:
+                connection.execute(f"ALTER TABLE pending_auth ADD COLUMN {column} {definition}")
 
 
 @contextmanager
 def get_connection() -> Iterator[sqlite3.Connection]:
-    connection = sqlite3.connect(get_settings().database_path)
+    connection = sqlite3.connect(get_settings().database_path, timeout=5.0)
     connection.row_factory = dict_factory
     connection.execute("PRAGMA foreign_keys=ON")
+    connection.execute("PRAGMA busy_timeout=5000")
     try:
         yield connection
         connection.commit()

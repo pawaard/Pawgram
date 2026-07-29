@@ -4,13 +4,16 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
 import shutil
-import subprocess
+import stat
+
+# The updater invokes a fixed system executable with an argv list and signed local package paths.
+import subprocess  # nosec B404
 import sys
 import tempfile
-from urllib.parse import urlparse
 import zipfile
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.exceptions import InvalidSignature
@@ -20,12 +23,14 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from app.config import APP_DIR, SOURCE_DIR
 from app.license_key import LICENSE_PUBLIC_KEY_PEM
 
-
 UPDATE_MANIFEST_URL = (
     "https://github.com/pawaard/Pawgram/releases/latest/download/pawgram-update.json"
 )
 UPDATE_PUBLIC_KEY_PEM = LICENSE_PUBLIC_KEY_PEM
 MAX_UPDATE_BYTES = 500 * 1024 * 1024
+MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 20_000
+MAX_COMPRESSION_RATIO = 200
 
 
 def current_version() -> str:
@@ -60,9 +65,11 @@ def verify_manifest(document: dict) -> dict:
     payload = document.get("payload")
     signature = document.get("signature")
     if not isinstance(payload, dict) or not isinstance(signature, str):
-        raise ValueError("Güncelleme manifesti eksik veya bozuk.")
+        raise TypeError("Güncelleme manifesti eksik veya bozuk.")
     canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    public_key: Ed25519PublicKey = serialization.load_pem_public_key(UPDATE_PUBLIC_KEY_PEM)
+    public_key = serialization.load_pem_public_key(UPDATE_PUBLIC_KEY_PEM)
+    if not isinstance(public_key, Ed25519PublicKey):
+        raise TypeError("Güncelleme doğrulama anahtarı Ed25519 biçiminde değil.")
     try:
         public_key.verify(_decode_signature(signature), canonical)
     except (InvalidSignature, ValueError) as error:
@@ -81,6 +88,17 @@ def verify_manifest(document: dict) -> dict:
     digest = str(payload["sha256"]).lower()
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise ValueError("Güncelleme SHA-256 değeri geçersiz.")
+    version = str(payload["version"])
+    if _version_tuple(version) == (0,) or not all(
+        part.isdigit() for part in version.lower().lstrip("v").split("-", 1)[0].split(".")
+    ):
+        raise ValueError("Güncelleme sürüm değeri geçersiz.")
+    archive_root = payload["archive_root"]
+    if not isinstance(archive_root, str) or not archive_root.strip():
+        raise ValueError("Güncelleme arşiv kökü geçersiz.")
+    root_path = PurePosixPath(archive_root.replace("\\", "/"))
+    if root_path.is_absolute() or ".." in root_path.parts or len(root_path.parts) != 1:
+        raise ValueError("Güncelleme arşiv kökü güvenli değil.")
     return payload
 
 
@@ -91,7 +109,7 @@ def _write_log(message: str) -> None:
         from datetime import datetime
 
         with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(f"[{datetime.now().isoformat(timespec='seconds')}] {message}\n")
+            handle.write(f"[{datetime.now().astimezone().isoformat(timespec='seconds')}] {message}\n")
     except OSError:
         pass
 
@@ -120,16 +138,61 @@ def _download_update(url: str, destination: Path, expected_sha256: str) -> None:
 
 def _safe_extract(archive_path: Path, destination: Path, archive_root: str) -> Path:
     with zipfile.ZipFile(archive_path) as archive:
+        members = archive.infolist()
+        if len(members) > MAX_ARCHIVE_MEMBERS:
+            raise ValueError("Güncelleme arşivinde izin verilenden fazla dosya var.")
+        total_uncompressed = 0
         destination_resolved = destination.resolve()
-        for member in archive.infolist():
+        for member in members:
+            if member.flag_bits & 0x1:
+                raise ValueError("Şifreli güncelleme arşivleri desteklenmiyor.")
+            unix_mode = member.external_attr >> 16
+            if stat.S_ISLNK(unix_mode):
+                raise ValueError("Güncelleme arşivinde sembolik bağlantı bulunamaz.")
+            total_uncompressed += member.file_size
+            if total_uncompressed > MAX_EXTRACTED_BYTES:
+                raise ValueError("Güncelleme arşivinin açılmış boyutu izin verilen sınırı aşıyor.")
+            if (
+                member.file_size > 10 * 1024 * 1024
+                and member.file_size > max(1, member.compress_size) * MAX_COMPRESSION_RATIO
+            ):
+                raise ValueError("Güncelleme arşivinde şüpheli sıkıştırma oranı bulundu.")
             member_path = (destination / member.filename).resolve()
             if destination_resolved not in member_path.parents and member_path != destination_resolved:
                 raise ValueError("Güncelleme arşivinde güvenli olmayan dosya yolu bulundu.")
         archive.extractall(destination)
-    staged_root = destination / archive_root
+    staged_root = (destination / archive_root).resolve()
+    destination_resolved = destination.resolve()
+    if destination_resolved not in staged_root.parents:
+        raise ValueError("Güncelleme arşiv kökü güvenli değil.")
     if not (staged_root / "Pawgram.exe").is_file() or not (staged_root / "_internal").is_dir():
         raise ValueError("Güncelleme paketinde Pawgram.exe veya _internal klasörü eksik.")
     return staged_root
+
+
+def mark_update_healthy() -> None:
+    marker_value = os.environ.pop("PAWGRAM_UPDATE_HEALTH_FILE", "").strip()
+    if not marker_value:
+        return
+    try:
+        marker = Path(marker_value).resolve()
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        if temp_root not in marker.parents or not any(
+            parent.name.startswith("PawgramUpdate-") for parent in marker.parents
+        ):
+            raise ValueError("Güncelleme sağlık işareti geçici Pawgram klasöründe değil.")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        pending = marker.with_name(f"{marker.name}.{os.getpid()}.tmp")
+        pending.write_text(
+            json.dumps(
+                {"ok": True, "pid": os.getpid(), "version": current_version()},
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        pending.replace(marker)
+    except (OSError, ValueError) as error:
+        _write_log(f"Güncelleme başlangıç doğrulama işareti yazılamadı: {error}")
 
 
 def _updater_script() -> str:
@@ -154,6 +217,9 @@ try { Wait-Process -Id $RunningProcessId -Timeout 90 -ErrorAction SilentlyContin
 $backup = Join-Path $install (".pawgram-update-backup-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
 $targets = @("Pawgram.exe", "_internal")
+$newProcess = $null
+$updateRoot = Split-Path -Parent (Split-Path -Parent $staged)
+$healthFile = Join-Path $updateRoot "startup-health.json"
 try {
     foreach ($name in $targets) {
         $current = Join-Path $install $name
@@ -161,12 +227,41 @@ try {
     }
     Copy-Item -LiteralPath (Join-Path $staged "Pawgram.exe") -Destination $exe -Force
     Copy-Item -LiteralPath (Join-Path $staged "_internal") -Destination (Join-Path $install "_internal") -Recurse -Force
-    Write-UpdateLog "Güncelleme kuruldu; data klasörü korundu."
-    Start-Process -FilePath $exe -WorkingDirectory $install
-    Start-Sleep -Seconds 3
+    if (Test-Path -LiteralPath $healthFile) { Remove-Item -LiteralPath $healthFile -Force }
+    $env:PAWGRAM_UPDATE_HEALTH_FILE = $healthFile
+    try {
+        $newProcess = Start-Process -FilePath $exe -WorkingDirectory $install -PassThru
+    } finally {
+        Remove-Item Env:PAWGRAM_UPDATE_HEALTH_FILE -ErrorAction SilentlyContinue
+    }
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path -LiteralPath $healthFile)) {
+        $newProcess.Refresh()
+        if ($newProcess.HasExited) {
+            throw "Yeni Pawgram sürümü başlangıç doğrulamasını tamamlamadan kapandı (çıkış kodu: $($newProcess.ExitCode))."
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not (Test-Path -LiteralPath $healthFile)) {
+        throw "Yeni Pawgram sürümü 45 saniye içinde başlangıç doğrulaması vermedi."
+    }
+    Start-Sleep -Seconds 2
+    $newProcess.Refresh()
+    if ($newProcess.HasExited) {
+        throw "Yeni Pawgram sürümü başlangıçtan hemen sonra kapandı (çıkış kodu: $($newProcess.ExitCode))."
+    }
+    Write-UpdateLog "Güncelleme doğrulandı ve kuruldu; data klasörü korundu."
     if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Recurse -Force }
 } catch {
     Write-UpdateLog ("Güncelleme kurulamadı, geri alınıyor: " + $_.Exception.Message)
+    Remove-Item Env:PAWGRAM_UPDATE_HEALTH_FILE -ErrorAction SilentlyContinue
+    if ($null -ne $newProcess) {
+        $newProcess.Refresh()
+        if (-not $newProcess.HasExited) {
+            Stop-Process -Id $newProcess.Id -Force -ErrorAction SilentlyContinue
+            try { Wait-Process -Id $newProcess.Id -Timeout 10 -ErrorAction SilentlyContinue } catch { }
+        }
+    }
     foreach ($name in $targets) {
         $current = Join-Path $install $name
         $saved = Join-Path $backup $name
@@ -204,10 +299,14 @@ def check_and_stage_update() -> bool:
         staged_root = _safe_extract(archive_path, extract_path, str(payload["archive_root"]))
         script_path = update_root / "install-update.ps1"
         script_path.write_text(_updater_script(), encoding="utf-8-sig")
+        system_root = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
+        powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if not powershell.is_file():
+            raise RuntimeError("Windows PowerShell sistem bileşeni bulunamadı.")
         creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        subprocess.Popen(
+        subprocess.Popen(  # nosec B603
             [
-                "powershell.exe",
+                str(powershell),
                 "-NoLogo",
                 "-NoProfile",
                 "-NonInteractive",
@@ -229,7 +328,7 @@ def check_and_stage_update() -> bool:
             f"{current_version()} sürümünden {payload['version']} sürümüne güncelleme indirildi; kurulum başlatıldı."
         )
         return True
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - update failure must never prevent the installed app starting
         _write_log(f"Güncelleme kontrolü atlandı: {str(error) or error.__class__.__name__}")
         return False
 
@@ -238,7 +337,12 @@ def clean_abandoned_update_directories() -> None:
     temp_root = Path(tempfile.gettempdir()).resolve()
     for path in temp_root.glob("PawgramUpdate-*"):
         try:
-            if path.is_dir() and path.stat().st_mtime < __import__("time").time() - 7 * 86400:
-                shutil.rmtree(path)
+            resolved = path.resolve()
+            if (
+                resolved.parent == temp_root
+                and path.is_dir()
+                and path.stat().st_mtime < __import__("time").time() - 7 * 86400
+            ):
+                shutil.rmtree(resolved)
         except OSError:
             pass

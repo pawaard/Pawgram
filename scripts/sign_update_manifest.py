@@ -1,10 +1,11 @@
 import argparse
 import base64
-from datetime import UTC, datetime
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 def encode(value: bytes) -> str:
@@ -30,5 +31,7 @@ payload = {
 }
 canonical = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
 private_key = serialization.load_pem_private_key(args.private_key.read_bytes(), password=None)
+if not isinstance(private_key, Ed25519PrivateKey):
+    raise TypeError("Güncelleme imzalama anahtarı Ed25519 biçiminde olmalıdır.")
 document = {"payload": payload, "signature": encode(private_key.sign(canonical))}
 args.output.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")

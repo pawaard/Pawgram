@@ -1,7 +1,8 @@
+import asyncio
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -76,6 +77,105 @@ class ActivitySafetyTests(unittest.TestCase):
         set_app_setting("activity_round_robin_cursor", str(first_id))
         self.assertEqual(_activity_session_candidates(None), [second_id, first_id])
 
+    def test_invite_batch_wait_does_not_block_activity_scan(self):
+        from app.database import get_connection
+        from app.telegram_service import scan_group_activity
+
+        session_id = self._add_session("Davet beklemesinde")
+        cooldown_until = (datetime.now(UTC) + timedelta(minutes=20)).isoformat()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='batch_wait', batch_cooldown_until=?
+                WHERE id=?
+                """,
+                (cooldown_until, session_id),
+            )
+
+        class FakeClient:
+            def __init__(self):
+                self.disconnect = AsyncMock()
+
+            async def iter_messages(self, entity, limit):
+                if False:
+                    yield entity
+
+        client = FakeClient()
+        entity = type("Group", (), {"id": 123, "title": "Test grubu"})()
+        scan = {
+            "session_id": session_id,
+            "group_ref": "@testgrubu",
+            "window_hours": 24,
+        }
+        with (
+            patch("app.telegram_service._client_for", new=AsyncMock(return_value=client)),
+            patch(
+                "app.telegram_service._resolve_or_request_group_access",
+                new=AsyncMock(return_value=entity),
+            ),
+            patch("app.telegram_service._record_activity_operation"),
+        ):
+            result = asyncio.run(scan_group_activity(scan))
+
+        self.assertEqual(result["session_id"], session_id)
+        client.disconnect.assert_awaited_once()
+        with get_connection() as connection:
+            session = connection.execute(
+                "SELECT status, batch_cooldown_until FROM telegram_sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+        self.assertEqual(session["status"], "batch_wait")
+        self.assertEqual(session["batch_cooldown_until"], cooldown_until)
+
+    def test_unavailable_preferred_session_falls_back_and_logs_every_candidate(self):
+        from app.database import get_connection
+        from app.telegram_service import _activity_session_candidates
+
+        preferred_id = self._add_session("Önceki tarama hesabı")
+        ready_id = self._add_session("Hazır yedek")
+        flood_until = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='flood_wait', flood_wait_until=?
+                WHERE id=?
+                """,
+                (flood_until, preferred_id),
+            )
+
+        self.assertEqual(_activity_session_candidates(preferred_id), [ready_id])
+        with get_connection() as connection:
+            logs = connection.execute(
+                """
+                SELECT level, message, session_id
+                FROM system_logs
+                WHERE category='activity_selector'
+                ORDER BY id
+                """
+            ).fetchall()
+
+        self.assertTrue(
+            any(
+                row["session_id"] == preferred_id
+                and "RED" in row["message"]
+                and "FloodWait devam ediyor" in row["message"]
+                for row in logs
+            )
+        )
+        self.assertTrue(
+            any(
+                row["session_id"] == ready_id
+                and "KABUL" in row["message"]
+                and "aktivite kotası uygun" in row["message"]
+                for row in logs
+            )
+        )
+        self.assertTrue(
+            any("Round-Robin ile devam ediyor" in row["message"] for row in logs)
+        )
+
     def test_access_error_keeps_the_real_telegram_error(self):
         from app.telegram_service import _activity_access_error
 
@@ -130,7 +230,10 @@ class ActivitySafetyTests(unittest.TestCase):
 
     def test_all_sessions_at_fixed_quota_wait_safely(self):
         from app.database import get_connection, set_app_setting, utc_now
-        from app.telegram_service import SessionBudgetWaiting, _activity_session_candidates
+        from app.telegram_service import (
+            SessionBudgetWaiting,
+            _activity_session_candidates,
+        )
 
         session_id = self._add_session("Bekleyen")
         today = datetime.now(UTC).date().isoformat()
@@ -146,6 +249,33 @@ class ActivitySafetyTests(unittest.TestCase):
 
         with self.assertRaises(SessionBudgetWaiting):
             _activity_session_candidates(None)
+
+    def test_running_scan_task_is_deduplicated_and_can_be_cancelled(self):
+        from app.activity_service import (
+            SCAN_TASKS,
+            cancel_activity_scan,
+            start_activity_scan,
+        )
+
+        async def scenario():
+            started = asyncio.Event()
+
+            async def fake_scan(scan_id: int) -> None:
+                self.assertEqual(scan_id, 42)
+                started.set()
+                await asyncio.Event().wait()
+
+            with patch("app.activity_service.execute_activity_scan", new=fake_scan):
+                first = start_activity_scan(42)
+                second = start_activity_scan(42)
+                self.assertIs(first, second)
+                await started.wait()
+                self.assertTrue(await cancel_activity_scan(42))
+                await asyncio.sleep(0)
+                self.assertTrue(first.cancelled())
+                self.assertNotIn(42, SCAN_TASKS)
+
+        asyncio.run(scenario())
 
 
 if __name__ == "__main__":

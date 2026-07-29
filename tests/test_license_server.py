@@ -1,8 +1,10 @@
 import importlib
 import os
-from pathlib import Path
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Barrier
 
 from fastapi.testclient import TestClient
 
@@ -17,14 +19,14 @@ class LicenseServerTests(unittest.TestCase):
         os.environ["LICENSE_PUBLIC_KEY_PATH"] = str(root / "public_key.pem")
         os.environ["LICENSE_LEASE_HOURS"] = "24"
 
-        import license_server.config as config
+        from license_server import config
         config.get_license_server_settings.cache_clear()
-        import license_server.signing as signing
+        from license_server import signing
         importlib.reload(signing)
         signing.generate_signing_keys(root / "signing_key.pem", root / "public_key.pem")
-        import license_server.database as database
+        from license_server import database
         importlib.reload(database)
-        import license_server.main as main
+        from license_server import main
         self.main = importlib.reload(main)
         self.client_context = TestClient(self.main.app)
         self.client = self.client_context.__enter__()
@@ -114,6 +116,30 @@ class LicenseServerTests(unittest.TestCase):
         response = self.client.get("/v1/admin/licenses", headers={"X-Admin-Key": "wrong"})
         self.assertEqual(response.status_code, 401)
 
+    def test_concurrent_activation_cannot_exceed_device_limit(self):
+        created = self.client.post(
+            "/v1/admin/licenses",
+            headers=self.headers,
+            json={"customer_label": "Concurrent", "duration_days": 7, "max_devices": 1},
+        ).json()
+        barrier = Barrier(2)
+
+        def activate_device(character: str):
+            barrier.wait(timeout=5)
+            return self.client.post(
+                "/v1/activate",
+                json={
+                    "license_key": created["license_key"],
+                    "device_id": character * 64,
+                    "installation_id": f"installation-{character * 16}",
+                    "app_version": "0.3.0",
+                },
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            responses = list(executor.map(activate_device, ("a", "b")))
+        self.assertEqual(sorted(response.status_code for response in responses), [200, 409])
+
     def test_admin_login_uses_httponly_session_cookie(self):
         login = self.client.post(
             "/v1/admin/login",
@@ -123,6 +149,33 @@ class LicenseServerTests(unittest.TestCase):
         self.assertIn("HttpOnly", login.headers["set-cookie"])
         authorized = self.client.get("/v1/admin/licenses")
         self.assertEqual(authorized.status_code, 200)
+
+    def test_admin_login_is_rate_limited(self):
+        for _ in range(5):
+            response = self.client.post(
+                "/v1/admin/login",
+                json={"admin_key": "wrong-admin-key-value"},
+            )
+            self.assertEqual(response.status_code, 401)
+        limited = self.client.post(
+            "/v1/admin/login",
+            json={"admin_key": "wrong-admin-key-value"},
+        )
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited.headers["retry-after"], "60")
+
+    def test_activation_is_rate_limited_without_unbounded_attempts(self):
+        payload = {
+            "license_key": "PAWG-XXXXX-XXXXX-XXXXX-XXXXX",
+            "device_id": "d" * 64,
+            "installation_id": "installation-test-1234",
+            "app_version": "0.3.0",
+        }
+        for _ in range(10):
+            response = self.client.post("/v1/activate", json=payload)
+            self.assertEqual(response.status_code, 403)
+        limited = self.client.post("/v1/activate", json=payload)
+        self.assertEqual(limited.status_code, 429)
 
 
 if __name__ == "__main__":

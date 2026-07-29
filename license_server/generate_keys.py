@@ -1,7 +1,6 @@
+from app.config import SOURCE_DIR
 from license_server.config import get_license_server_settings
 from license_server.signing import generate_signing_keys
-from app.config import SOURCE_DIR
-
 
 if __name__ == "__main__":
     settings = get_license_server_settings()

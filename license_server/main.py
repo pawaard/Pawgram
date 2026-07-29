@@ -3,29 +3,44 @@ import hashlib
 import hmac
 import json
 import secrets
+import sqlite3
 import time
-from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 
+from app.rate_limit import InMemoryRateLimiter
 from license_server.config import SERVER_DIR, get_license_server_settings
-from license_server.database import add_audit, get_connection, initialize_database, utc_now
-from license_server.schemas import AdminLoginRequest, ActivationRequest, LicenseCreateRequest, LicenseExtendRequest, ValidationRequest
+from license_server.database import (
+    add_audit,
+    get_connection,
+    initialize_database,
+    utc_now,
+)
+from license_server.schemas import (
+    ActivationRequest,
+    AdminLoginRequest,
+    LicenseCreateRequest,
+    LicenseExtendRequest,
+    ValidationRequest,
+)
 from license_server.signing import sign_payload, verify_token
 
-
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-ACTIVATION_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
+ACTIVATION_LIMITER = InMemoryRateLimiter(limit=10, window_seconds=60)
+ADMIN_LOGIN_LIMITER = InMemoryRateLimiter(limit=5, window_seconds=60)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_database()
     settings = get_license_server_settings()
+    if len(settings.admin_api_key) < 20:
+        raise RuntimeError(
+            "LICENSE_ADMIN_API_KEY en az 20 karakterlik güçlü ve rastgele bir değer olmalıdır."
+        )
     if not settings.signing_key_path.exists() or not settings.public_key_path.exists():
         raise RuntimeError("Lisans imza anahtarları bulunamadı. Önce generate_keys.py çalıştırın.")
     yield
@@ -99,13 +114,12 @@ def create_code() -> str:
 
 def rate_limit_activation(request: Request) -> None:
     address = request.client.host if request.client else "unknown"
-    now = time.monotonic()
-    attempts = ACTIVATION_ATTEMPTS[address]
-    while attempts and attempts[0] < now - 60:
-        attempts.popleft()
-    if len(attempts) >= 10:
-        raise HTTPException(status_code=429, detail="Çok fazla deneme yapıldı. Bir dakika bekleyin.")
-    attempts.append(now)
+    if not ACTIVATION_LIMITER.allow(address):
+        raise HTTPException(
+            status_code=429,
+            detail="Çok fazla deneme yapıldı. Bir dakika bekleyin.",
+            headers={"Retry-After": "60"},
+        )
 
 
 def parse_time(value: str) -> datetime:
@@ -151,10 +165,18 @@ def health():
 
 
 @app.post("/v1/admin/login")
-def admin_login(payload: AdminLoginRequest, response: Response):
+def admin_login(payload: AdminLoginRequest, response: Response, request: Request):
     settings = get_license_server_settings()
+    address = request.client.host if request.client else "unknown"
+    if not ADMIN_LOGIN_LIMITER.allow(address):
+        raise HTTPException(
+            status_code=429,
+            detail="Çok fazla yönetici giriş denemesi yapıldı. Bir dakika bekleyin.",
+            headers={"Retry-After": "60"},
+        )
     if not secrets.compare_digest(payload.admin_key, settings.admin_api_key):
         raise HTTPException(status_code=401, detail="Yönetici anahtarı geçersiz.")
+    ADMIN_LOGIN_LIMITER.reset(address)
     response.set_cookie(
         "pawgram_license_admin",
         _admin_session_token(),
@@ -202,9 +224,8 @@ def create_license(payload: LicenseCreateRequest):
                 "max_devices": payload.max_devices,
                 "warning": "Bu lisans kodu yalnızca şimdi açık biçimde gösterilir.",
             }
-        except Exception as error:
-            if "UNIQUE constraint" not in str(error):
-                raise
+        except sqlite3.IntegrityError:
+            continue
     raise HTTPException(status_code=500, detail="Benzersiz lisans kodu üretilemedi.")
 
 
@@ -279,6 +300,9 @@ def activate(payload: ActivationRequest, request: Request):
     rate_limit_activation(request)
     normalized_hash = code_hash(payload.license_key)
     with get_connection() as connection:
+        # Serialize the device-count check and activation write so concurrent
+        # requests cannot exceed a license's configured device limit.
+        connection.execute("BEGIN IMMEDIATE")
         license_record = connection.execute(
             "SELECT * FROM licenses WHERE code_hash=?", (normalized_hash,)
         ).fetchone()

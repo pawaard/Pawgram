@@ -15,5 +15,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements.txt -r requirements-build.txt -r requirements-dev.txt
+      - run: python -m ruff check app license_server scripts tests run.py
+      - run: python -m mypy app license_server scripts run.py --ignore-missing-imports
+      - run: python -m bandit -r app license_server scripts run.py -q -ll
+      - run: node --check static/app.js
       - run: python -m unittest discover -s tests -v
+      - run: python -m pip_audit -r requirements.txt -r requirements-build.txt --progress-spinner off
+      - run: python -m PyInstaller --noconfirm Pawgram.spec --distpath dist-ci --workpath build-ci

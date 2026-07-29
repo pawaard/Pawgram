@@ -1,16 +1,24 @@
 import base64
 import hashlib
 import json
+import os
+import stat
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
-import zipfile
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from app.updater import _safe_extract, is_newer_version, verify_manifest
+from app.updater import (
+    _safe_extract,
+    _updater_script,
+    is_newer_version,
+    mark_update_healthy,
+    verify_manifest,
+)
 
 
 class UpdaterTests(unittest.TestCase):
@@ -52,3 +60,62 @@ class UpdaterTests(unittest.TestCase):
             destination.mkdir()
             with self.assertRaisesRegex(ValueError, "güvenli olmayan"):
                 _safe_extract(archive, destination, "Pawgram")
+
+    def test_update_archive_rejects_unsafe_manifest_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "package.zip"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("Pawgram/Pawgram.exe", "exe")
+                handle.writestr("Pawgram/_internal/runtime.txt", "runtime")
+            destination = root / "extract"
+            destination.mkdir()
+            with self.assertRaisesRegex(ValueError, "arşiv kökü güvenli değil"):
+                _safe_extract(archive, destination, "../outside")
+
+    def test_update_archive_rejects_symbolic_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "links.zip"
+            link = zipfile.ZipInfo("Pawgram/link")
+            link.create_system = 3
+            link.external_attr = (stat.S_IFLNK | 0o777) << 16
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr(link, "../outside")
+            destination = root / "extract"
+            destination.mkdir()
+            with self.assertRaisesRegex(ValueError, "sembolik bağlantı"):
+                _safe_extract(archive, destination, "Pawgram")
+
+    def test_update_archive_rejects_suspicious_compression_ratio(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "bomb.zip"
+            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as handle:
+                handle.writestr("Pawgram/large.bin", b"0" * (11 * 1024 * 1024))
+            destination = root / "extract"
+            destination.mkdir()
+            with self.assertRaisesRegex(ValueError, "sıkıştırma oranı"):
+                _safe_extract(archive, destination, "Pawgram")
+
+    def test_running_application_writes_update_health_marker(self):
+        update_root = Path(tempfile.mkdtemp(prefix="PawgramUpdate-"))
+        marker = update_root / "startup-health.json"
+        try:
+            with patch.dict(os.environ, {"PAWGRAM_UPDATE_HEALTH_FILE": str(marker)}):
+                mark_update_healthy()
+            payload = json.loads(marker.read_text(encoding="utf-8"))
+            self.assertTrue(payload["ok"])
+            self.assertGreater(payload["pid"], 0)
+        finally:
+            import shutil
+
+            shutil.rmtree(update_root, ignore_errors=True)
+
+    def test_installer_waits_for_health_marker_before_deleting_backup(self):
+        script = _updater_script()
+        health_check = script.index("Test-Path -LiteralPath $healthFile")
+        backup_delete = script.index("Remove-Item -LiteralPath $backup -Recurse -Force")
+        self.assertLess(health_check, backup_delete)
+        self.assertIn("$newProcess.HasExited", script)
+        self.assertIn("45 saniye içinde başlangıç doğrulaması vermedi", script)

@@ -6,10 +6,50 @@ from telethon.errors import FloodWaitError
 
 from app.database import add_log, add_notification, get_connection, utc_now
 from app.licensing import local_license_status
-from app.telegram_service import GroupJoinPending, SessionBudgetWaiting, scan_group_activity
-
+from app.telegram_service import (
+    GroupJoinPending,
+    SessionBudgetWaiting,
+    scan_group_activity,
+)
 
 RUNNING_SCANS: set[int] = set()
+SCAN_TASKS: dict[int, asyncio.Task[None]] = {}
+
+
+def start_activity_scan(scan_id: int) -> asyncio.Task[None]:
+    existing = SCAN_TASKS.get(scan_id)
+    if existing is not None and not existing.done():
+        return existing
+
+    task = asyncio.create_task(execute_activity_scan(scan_id))
+    SCAN_TASKS[scan_id] = task
+
+    def forget(completed: asyncio.Task[None]) -> None:
+        if SCAN_TASKS.get(scan_id) is completed:
+            SCAN_TASKS.pop(scan_id, None)
+
+    task.add_done_callback(forget)
+    return task
+
+
+async def cancel_activity_scan(scan_id: int) -> bool:
+    task = SCAN_TASKS.get(scan_id)
+    if task is None or task.done():
+        return False
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+    return True
+
+
+async def stop_activity_scans() -> None:
+    tasks = [task for task in SCAN_TASKS.values() if not task.done()]
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    SCAN_TASKS.clear()
+    RUNNING_SCANS.clear()
 
 
 async def execute_activity_scan(scan_id: int) -> None:
@@ -146,7 +186,7 @@ async def execute_activity_scan(scan_id: int) -> None:
                     scan_id,
                 ),
             )
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - task boundary persists every unexpected failure
         with get_connection() as connection:
             connection.execute(
                 "UPDATE activity_scans SET status='error', last_error=?, updated_at=? WHERE id=?",
@@ -178,11 +218,11 @@ async def activity_scheduler_loop() -> None:
             ).fetchall()
         for scan in scans:
             if scan["id"] not in RUNNING_SCANS:
-                asyncio.create_task(execute_activity_scan(scan["id"]))
+                start_activity_scan(scan["id"])
         await asyncio.sleep(5)
 
 
-async def stop_scheduler(task: asyncio.Task) -> None:
+async def stop_scheduler(task: asyncio.Task[None]) -> None:
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task

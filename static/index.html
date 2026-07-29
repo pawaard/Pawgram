@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css">
+  <link rel="stylesheet" href="/static/features.css?v=20260729-signature-v1">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -20,10 +20,16 @@
         <button class="nav-item" data-page="sessions"><span>♙</span> Session'lar</button>
         <button class="nav-item" data-page="groups"><span>◫</span> Gruplarım</button>
         <button class="nav-item" data-page="activity"><span>◉</span> Aktiflik</button>
+        <button class="nav-item" data-page="heartbeat"><span>♥</span> Heartbeat</button>
         <button class="nav-item" data-page="jobs"><span>☷</span> Kuyruk</button>
         <button class="nav-item" data-page="logs"><span>▤</span> Loglar</button>
         <button class="nav-item" data-page="settings"><span>⚙</span> Ayarlar</button>
       </nav>
+      <div class="sidebar-signature">
+        <span>PAWGRAM</span>
+        <a href="https://t.me/PawardCode" target="_blank" rel="noopener noreferrer">Paward</a>
+        <small>tarafından sevgiyle kodlanmıştır</small>
+      </div>
       <div class="safety-card">
         <span class="status-dot"></span>
         <strong>Koruma modu açık</strong>
@@ -48,6 +54,23 @@
           <article class="stat-card"><small>AKTİF SESSION</small><strong id="metric-active">0</strong><span class="positive">Kullanıma hazır</span></article>
           <article class="stat-card"><small>KUYRUKTAKİ İŞ</small><strong id="metric-jobs">0</strong><span>Hazır ve çalışan</span></article>
           <article class="stat-card"><small>FLOODWAIT</small><strong id="metric-waiting">0</strong><span class="warning">Zorunlu beklemede</span></article>
+        </div>
+
+        <div class="dashboard-insights-grid">
+          <div class="panel dashboard-insight-panel">
+            <div class="section-heading"><div><h2>Durum ve uyarılar</h2><p>Müdahale gerekebilecek kayıtlar</p></div><button class="ghost" data-page-link="logs">Logları aç</button></div>
+            <div id="dashboard-alerts" class="dashboard-alerts"></div>
+            <div id="dashboard-health-summary" class="dashboard-health-summary"></div>
+          </div>
+          <div class="panel dashboard-insight-panel">
+            <div class="section-heading"><div><h2>Bugünün özeti</h2><p>UTC günü içindeki işlem sonuçları</p></div></div>
+            <div id="dashboard-today-summary" class="dashboard-today-summary"></div>
+          </div>
+        </div>
+
+        <div class="panel dashboard-operations-panel">
+          <div class="section-heading"><div><h2>Şu anda çalışan session işlemleri</h2><p>Aynı session'ın eş zamanlı kullanılmasını engelleyen aktif kilitler</p></div><button class="ghost" data-page-link="sessions">Session'ları aç</button></div>
+          <div id="dashboard-active-operations" class="table-wrap"></div>
         </div>
 
         <div class="panel quick-panel">
@@ -89,11 +112,24 @@
         </div>
         <div class="panel">
           <div class="section-heading"><div><h2>Session listesi</h2><p>Uygulama seviyesinde telefon sınırı bulunmaz.</p></div><button class="primary" id="open-session-modal">＋ Numara ekle</button></div>
+          <div class="session-list-toolbar">
+            <label>Session ara<input id="session-search" type="search" placeholder="Etiket, telefon veya kullanıcı adı"></label>
+            <label>Durum<select id="session-status-filter"><option value="all">Tüm durumlar</option><option value="ready">Kullanıma hazır</option><option value="waiting">Beklemede</option><option value="busy">İşlem yapıyor</option><option value="problem">Sorunlu</option></select></label>
+            <label>Proxy<select id="session-proxy-filter"><option value="all">Tüm proxy durumları</option><option value="healthy">Proxy sağlıklı</option><option value="attention">Kontrol gerekiyor</option></select></label>
+            <label>Sıralama<select id="session-sort"><option value="newest">En yeni</option><option value="label">Etikete göre</option><option value="health">Sağlığa göre</option><option value="usage">Bugünkü kullanıma göre</option><option value="recent">Son işleme göre</option></select></label>
+            <span id="session-filter-count" class="session-filter-count">0 session</span>
+          </div>
           <div id="session-table" class="table-wrap"></div>
         </div>
       </section>
 
       <section class="page" id="page-groups">
+        <div class="stats-grid four-small">
+          <article class="stat-card"><small>YÜKLENEN GRUP</small><strong id="group-total">0</strong></article>
+          <article class="stat-card"><small>KAYNAK İÇİN UYGUN</small><strong class="green" id="group-source-ready">0</strong></article>
+          <article class="stat-card"><small>HEDEF İÇİN UYGUN</small><strong class="blue" id="group-target-ready">0</strong></article>
+          <article class="stat-card"><small>YÖNETİCİ ERİŞİMİ</small><strong class="yellow" id="group-admin">0</strong></article>
+        </div>
         <div class="panel">
           <div class="section-heading"><div><h2>Gruplarım</h2><p>Bir hesabın erişebildiği grupları listeleyin veya referans doğrulayın.</p></div><button class="secondary" id="refresh-groups">↻ Grupları getir</button></div>
           <div class="group-toolbar">
@@ -102,7 +138,49 @@
             <button class="primary align-end" id="resolve-single-group">Doğrula</button>
           </div>
           <div id="resolved-group" class="validation-result hidden"></div>
+          <div class="group-list-tools">
+            <label>Grup ara<input id="group-search" type="search" placeholder="Grup adı, @kullanıcı adı veya ID"></label>
+            <label>Tür<select id="group-kind-filter"><option value="all">Tüm türler</option><option value="group">Grup</option><option value="megagroup">Megagroup</option><option value="channel">Kanal</option></select></label>
+            <label>Uygunluk<select id="group-suitability-filter"><option value="all">Tüm erişimler</option><option value="source">Kaynak için uygun</option><option value="target">Hedef için uygun</option><option value="admin">Yönetici erişimi</option></select></label>
+            <label>Sıralama<select id="group-sort"><option value="title">Grup adına göre</option><option value="participants">Üye sayısına göre</option><option value="unread">Okunmamış mesaja göre</option><option value="id">Grup ID'sine göre</option></select></label>
+            <span id="group-filter-count" class="group-filter-count">0 grup</span>
+          </div>
           <div id="groups-table" class="table-wrap empty-state"><div class="empty-icon">◫</div><strong>Henüz grup yüklenmedi</strong><span>Bir session seçip “Grupları getir” düğmesine basın.</span></div>
+        </div>
+        <div class="panel group-access-panel">
+          <div class="section-heading"><div><h2>Sessionları gruba hazırla</h2><p>Seçilen hesaplar gruba paralel olmadan, tek tek katılır ve erişim/yetki sonucu kaydedilir.</p></div><button class="secondary" id="refresh-group-access">↻ Durumu yenile</button></div>
+          <div class="group-access-form">
+            <label>Grup ID, @kullanıcı adı veya davet bağlantısı<input id="group-access-reference" placeholder="-100..., @grup veya https://t.me/+..."></label>
+            <label>Kullanım amacı<select id="group-access-purpose"><option value="source">Kaynak grup erişimi</option><option value="target">Hedef grup ve üye ekleme yetkisi</option></select></label>
+            <label>En az bekleme (sn)<input id="group-access-min-delay" type="number" min="0" max="3600" value="15"></label>
+            <label>En fazla bekleme (sn)<input id="group-access-max-delay" type="number" min="0" max="3600" value="30"></label>
+          </div>
+          <div class="group-access-session-heading">
+            <div><strong>Hazırlanacak sessionlar</strong><small>Her session kendi sabit proxy'siyle kontrol edilir; proxy çalışmazsa ana IP kullanılmaz.</small></div>
+            <label class="check-label"><input id="group-access-select-all" type="checkbox"> Tümünü seç</label>
+          </div>
+          <div id="group-access-sessions" class="group-access-session-grid"></div>
+          <div class="session-health-box">
+            <div class="section-heading"><div><h3>İşlem öncesi toplu sağlık kontrolü</h3><p>Hiçbir gruba katılmadan proxy, session, kaynak erişimi ve hedef yetkisini kontrol eder.</p></div><button class="secondary" id="refresh-session-health">↻ Sonucu yenile</button></div>
+            <div class="session-health-form">
+              <label>Kaynak grup (isteğe bağlı)<input id="session-health-source" placeholder="-100..., @kaynak veya özel davet bağlantısı"></label>
+              <label>Hedef grup (isteğe bağlı)<input id="session-health-target" placeholder="-100..., @hedef veya özel davet bağlantısı"></label>
+              <button class="primary align-end" id="start-session-health">Seçili sessionları kontrol et</button>
+            </div>
+            <div id="session-health-message" class="proxy-status session-health-message">Aynı seçili sessionlar kullanılır. Grup alanları boşsa yalnızca proxy ve session kontrol edilir.</div>
+            <div id="session-health-results" class="table-wrap"></div>
+          </div>
+          <div class="group-access-actions">
+            <button class="primary" id="start-group-access">Sessionları gruba hazırla</button>
+            <div id="group-access-message" class="proxy-status">Bir grup ve en az bir session seçin.</div>
+          </div>
+          <div class="compliance-note"><strong>Sıralı işlem:</strong> Sessionlar aynı anda çalıştırılmaz. Özel grupta yönetici onayı gerekiyorsa ilgili hesap “onay bekliyor” olarak işaretlenir ve kuyruk sıradaki hesaba geçer. FloodWait veya Telegram kısıtlaması tüm kuyruğu durdurur.</div>
+          <div class="group-access-result-tools">
+            <label>Hazırlama sonucunda ara<input id="group-access-result-search" type="search" placeholder="Session, telefon veya grup"></label>
+            <label>Sonuç<select id="group-access-result-filter"><option value="all">Tüm sonuçlar</option><option value="ready">Hazır / grupta</option><option value="approval_pending">Onay bekliyor</option><option value="failed">Başarısız</option><option value="pending">Sırada / çalışıyor</option></select></label>
+            <span id="group-access-result-count" class="group-filter-count">0 sonuç</span>
+          </div>
+          <div id="group-access-batches" class="table-wrap"></div>
         </div>
       </section>
 
@@ -132,6 +210,31 @@
         </div>
       </section>
 
+      <section class="page" id="page-heartbeat">
+        <div class="stats-grid four-small">
+          <article class="stat-card"><small>DURUM</small><strong id="heartbeat-enabled-state">Kapalı</strong></article>
+          <article class="stat-card"><small>ARALIK</small><strong class="blue" id="heartbeat-interval-state">60 dk</strong></article>
+          <article class="stat-card"><small>TOPLAM BAŞARI</small><strong class="green" id="heartbeat-success-total">0</strong></article>
+          <article class="stat-card"><small>TOPLAM HATA</small><strong class="red" id="heartbeat-failure-total">0</strong></article>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>Heartbeat ayarları</h2><p>Her aktif session yalnızca yapılandırılan Telegram grubuna tek mesaj gönderir.</p></div></div>
+          <div class="heartbeat-form">
+            <label class="check-label heartbeat-check"><input id="heartbeat-enabled" type="checkbox"> Heartbeat'i etkinleştir</label>
+            <label>Heartbeat aralığı (dakika)<input id="heartbeat-interval" type="number" min="1" max="10080" value="60"></label>
+            <label>Heartbeat Group ID<input id="heartbeat-group-id" type="text" placeholder="-1001234567890"></label>
+            <label class="span-2">Mesaj şablonu<textarea id="heartbeat-message" maxlength="4096" rows="4">Merhabaa</textarea></label>
+            <button class="primary align-end" id="save-heartbeat-settings">Kaydet</button>
+          </div>
+          <div id="heartbeat-settings-message" class="form-message hidden"></div>
+          <div class="compliance-note"><strong>İzolasyon:</strong> Heartbeat meşgul session'ı beklemeden atlar, invite işini durdurmaz ve başarısızlık durumunda session statüsünü değiştirmez.</div>
+        </div>
+        <div class="panel">
+          <div class="section-heading"><div><h2>Session heartbeat durumu</h2><p>Son deneme, başarı, hata ve bir sonraki çalışma zamanı</p></div><button class="secondary" id="refresh-heartbeat">↻ Yenile</button></div>
+          <div id="heartbeat-table" class="table-wrap"></div>
+        </div>
+      </section>
+
       <section class="page" id="page-jobs">
         <div class="stats-grid four-small">
           <article class="stat-card"><small>HAZIR</small><strong id="job-ready">0</strong></article>
@@ -146,15 +249,48 @@
       </section>
 
       <section class="page" id="page-logs">
+        <div class="stats-grid four-small log-summary-grid">
+          <article class="stat-card"><small>GÖSTERİLEN KAYIT</small><strong id="log-total">0</strong></article>
+          <article class="stat-card"><small>BAŞARILI</small><strong class="green" id="log-success">0</strong></article>
+          <article class="stat-card"><small>UYARI</small><strong class="yellow" id="log-warning">0</strong></article>
+          <article class="stat-card"><small>HATA</small><strong class="red" id="log-error">0</strong></article>
+        </div>
         <div class="panel">
-          <div class="section-heading"><div><h2>Sistem logları</h2><p>Session, grup doğrulama ve kuyruk kayıtları</p></div><button class="secondary" id="refresh-logs">↻ Yenile</button></div>
+          <div class="section-heading"><div><h2>Sistem logları</h2><p>Session, grup doğrulama ve kuyruk kayıtları</p></div><div class="log-heading-actions"><button class="ghost" id="toggle-log-refresh">Otomatik yenilemeyi duraklat</button><button class="secondary" id="refresh-logs">↻ Yenile</button></div></div>
+          <div class="log-toolbar">
+            <label>Mesaj veya kategori ara<input id="log-search" type="search" placeholder="FloodWait, proxy, davet..."></label>
+            <label>Seviye<select id="log-level-filter"><option value="all">Tüm seviyeler</option><option value="success">Başarılı</option><option value="warning">Uyarı</option><option value="error">Hata</option><option value="info">Bilgi</option></select></label>
+            <label>Kategori<select id="log-category-filter"><option value="all">Tüm kategoriler</option></select></label>
+            <label>Session ID<input id="log-session-filter" type="number" min="1" placeholder="Tümü"></label>
+            <label>JOB ID<input id="log-job-filter" type="number" min="1" placeholder="Tümü"></label>
+            <label>Başlangıç<input id="log-date-from" type="date"></label>
+            <label>Bitiş<input id="log-date-to" type="date"></label>
+          </div>
+          <div class="log-status-bar"><span id="log-refresh-status">Otomatik yenileme açık.</span><div><button class="ghost" id="clear-log-filters">Filtreleri temizle</button><button class="ghost" id="export-logs-json">Maskeli JSON</button><button class="ghost" id="export-logs-csv">Maskeli CSV</button></div></div>
           <div id="all-logs" class="log-stream"></div>
+          <div class="log-load-row"><button class="secondary hidden" id="load-more-logs">Daha fazla göster</button><span id="log-filter-count">0 kayıt</span></div>
         </div>
       </section>
 
       <section class="page" id="page-settings">
+        <div class="panel settings-overview-panel">
+          <div class="section-heading"><div><h2>Ayar sağlığı</h2><p>Hassas bilgileri göstermeyen genel yapılandırma durumu</p></div><button class="secondary" id="refresh-settings-overview">↻ Yenile</button></div>
+          <div class="settings-health-grid">
+            <article><small>TELEGRAM API</small><strong id="settings-health-api">Kontrol ediliyor</strong><span id="settings-health-api-note">—</span></article>
+            <article><small>SESSION PROXYLERİ</small><strong id="settings-health-proxy">0 / 0</strong><span id="settings-health-proxy-note">—</span></article>
+            <article><small>SON YEDEK</small><strong id="settings-health-backup">—</strong><span id="settings-health-backup-note">—</span></article>
+            <article><small>PAWGRAM SÜRÜMÜ</small><strong id="settings-health-version">—</strong><span id="settings-health-version-note">Stable kanal</span></article>
+          </div>
+          <div class="settings-search-bar">
+            <label>Ayarlar içinde ara<input id="settings-search" type="search" placeholder="Proxy, Telegram API, kota, yedek, lisans..."></label>
+            <button class="ghost" id="clear-settings-search">Aramayı temizle</button>
+            <span id="settings-search-count">Tüm bölümler gösteriliyor</span>
+          </div>
+          <div id="settings-unsaved-warning" class="settings-unsaved-warning hidden"><strong>Kaydedilmemiş değişiklikler var.</strong><span>İlgili bölümün kaydet düğmesini kullanmadan sayfadan ayrılırsanız değişiklikler uygulanmaz.</span></div>
+          <div id="settings-validation-summary" class="settings-validation-summary hidden"></div>
+        </div>
         <div class="settings-grid">
-          <div class="panel">
+          <div class="panel" data-settings-section data-settings-keywords="koruma güvenlik floodwait round robin kota yönetici filtre önizleme">
             <div class="section-heading"><div><h2>Koruma kuralları</h2><p>Bu kurallar uygulamanın temel davranışıdır.</p></div></div>
             <div class="setting-row"><div><strong>FloodWait'e zorunlu uy</strong><small>Telegram'ın bildirdiği süre bitmeden işlem yapılmaz.</small></div><span class="toggle on"></span></div>
             <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Session değişimi yalnızca işlem başlamadan önce, sabit kota kontrolüyle yapılır. Hata veya FloodWait içinde hesap değiştirilmez.</small></div><span class="toggle on"></span></div>
@@ -166,7 +302,7 @@
               <div id="rotation-settings-message" class="form-message hidden"></div>
             </div>
           </div>
-          <div class="panel">
+          <div class="panel" data-settings-section data-settings-keywords="telegram api id hash bağlantı yapılandırma">
           <div class="section-heading"><div><h2>Telegram API bağlantısı</h2><p>Dosya düzenlemeden panel üzerinden yapılandırın.</p></div></div>
             <div id="api-config-state" class="config-state"></div>
             <div class="api-form">
@@ -178,7 +314,7 @@
             <p class="help-text">Bilgiler yerel veritabanında şifreli saklanır. API Hash kaydedildikten sonra tekrar açık biçimde gösterilmez.</p>
           </div>
         </div>
-        <div class="panel license-panel">
+        <div class="panel license-panel" data-settings-section data-settings-keywords="lisans cihaz aktivasyon ed25519 kişisel ticari">
           <div class="section-heading"><div><h2>Lisans ve cihaz aktivasyonu</h2><p>Sunucu imzalı süre ve cihaz doğrulama durumu</p></div><span class="badge active">Ed25519</span></div>
           <div class="license-status-grid">
             <div id="license-state" class="license-state"><strong>Kontrol ediliyor</strong><small>Lisans durumu alınıyor…</small></div>
@@ -186,8 +322,23 @@
           </div>
           <p class="help-text">Kişisel sürümde lisans zorunlu değildir. Ticari paket etkinleştirildiğinde lisans cihazla eşleştirilir ve belirli aralıklarla güvenli sunucuda doğrulanır.</p>
         </div>
-        <div class="panel proxy-panel">
+        <div class="panel proxy-panel" data-settings-section data-settings-keywords="proxy varsayılan socks5 http session bağlantı toplu devir limit dinlenme">
           <div class="section-heading"><div><h2>Session proxy yönetimi</h2><p>Her Telegram hesabı sabit SOCKS5 veya HTTP proxy ile çalışır. Atanan proxy işlem sırasında otomatik değiştirilmez.</p></div><span class="badge active">Fail-closed</span></div>
+          <div class="default-proxy-box">
+            <div><strong>Pawgram varsayılan proxy</strong><small>Yeni telefon eklerken otomatik gelir. Müşteri paketindeki ilk kurulum da bu varsayılanı şifreleyerek kullanır.</small></div>
+            <div class="proxy-form default-proxy-form">
+              <label>Proxy türü<select id="default-proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></label>
+              <label>Sunucu / IP<input id="default-proxy-host" placeholder="proxy.example.com"></label>
+              <label>Port<input id="default-proxy-port" type="number" min="1" max="65535" placeholder="1080"></label>
+              <label>Kullanıcı adı<input id="default-proxy-username" autocomplete="off"></label>
+              <label>Parola <span>(boş bırakılırsa mevcut parola korunur)</span><input id="default-proxy-password" type="password" autocomplete="new-password"></label>
+            </div>
+            <div class="proxy-actions">
+              <button class="primary" id="save-default-proxy">Varsayılan proxyyi kaydet</button>
+              <button class="secondary" id="test-default-proxy">Varsayılan bağlantıyı test et</button>
+              <div id="default-proxy-status" class="proxy-status">Varsayılan proxy yükleniyor…</div>
+            </div>
+          </div>
           <div class="proxy-form">
             <label>Telegram session<select id="proxy-session"></select></label>
             <label class="check-label"><input id="proxy-enabled" type="checkbox"> Bu session için proxyyi etkinleştir</label>
@@ -203,6 +354,13 @@
             <button class="danger-button" id="delete-proxy">Proxyyi sil</button>
             <div id="proxy-status" class="proxy-status">Bir session seçerek proxy yapılandırabilirsiniz.</div>
           </div>
+          <div class="session-invite-policy">
+            <div><strong>Otomatik session devri</strong><small>Bu session belirlenen sayıda başarılı ekleme yapınca dinlenir; iş, aynı tarama ve kalan adaylarla sıradaki sağlıklı session üzerinden otomatik sürer.</small></div>
+            <label>Başarılı ekleme limiti (X)<input id="invite-batch-limit" type="number" min="1" max="20" value="3"></label>
+            <label>Session dinlenme süresi<input id="invite-cooldown-minutes" type="number" min="5" max="240" value="20"></label>
+            <button class="primary" id="save-invite-policy">Devir ayarını kaydet</button>
+            <div id="invite-policy-status" class="proxy-status">Bir session seçin.</div>
+          </div>
           <div class="proxy-bulk">
             <div><strong>Toplu Proxy Ekle</strong><small>TXT içindeki proxyler yalnızca proxy bilgisi boş hesaplara, hesap ID sırasıyla birer kez atanır.</small></div>
             <label>Varsayılan tür<select id="bulk-proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP CONNECT</option></select></label>
@@ -212,11 +370,28 @@
           <div id="bulk-proxy-status" class="proxy-status bulk-status">Biçimler: host:port, host:port:user:pass, user:pass@host:port veya socks5://user:pass@host:port</div>
           <div class="compliance-note"><strong>IP sızıntısı koruması:</strong> Proxy yoksa veya test yanıt vermezse hesap çalıştırılmaz; Pawgram doğrudan internet bağlantısına geri dönmez. Host/port, kullanıcı-parola, IP yetkilendirmesi ve proxy paket süresini kontrol edin.</div>
         </div>
-        <div class="panel backup-panel">
-          <div class="section-heading"><div><h2>Yedekleme ve veri güvenliği</h2><p>Veritabanının geri yüklenebilir bir kopyasını oluşturun.</p></div><button class="primary" id="create-backup">＋ Yeni yedek oluştur</button></div>
+        <div class="settings-grid">
+          <div class="panel" data-settings-section data-settings-keywords="sürüm güncelleme github stable manifest imza">
+            <div class="section-heading"><div><h2>Sürüm ve güncelleme</h2><p>Yalnızca resmi imzalı GitHub manifestini kontrol eder.</p></div><span class="badge active">Salt okunur</span></div>
+            <div class="update-status-card">
+              <div><small>MEVCUT SÜRÜM</small><strong id="settings-current-version">—</strong></div>
+              <div><small>SON YAYIN</small><strong id="settings-latest-version">Henüz kontrol edilmedi</strong></div>
+              <div><small>SON KONTROL</small><strong id="settings-update-checked">—</strong></div>
+            </div>
+            <div class="settings-action-row"><button class="secondary" id="check-settings-update">Güncellemeyi kontrol et</button><div id="settings-update-message" class="proxy-status">Kontrol yalnızca sürüm bilgisini okur; paket indirmez veya kurmaz.</div></div>
+          </div>
+          <div class="panel" data-settings-section data-settings-keywords="tanılama rapor sistem sağlık gizlilik destek hata">
+            <div class="section-heading"><div><h2>Güvenli tanılama</h2><p>Destek için gizli bilgi içermeyen sistem özeti</p></div><span class="badge active">Maskelenmiş</span></div>
+            <div class="diagnostics-safe-list"><span>✓ Telefon ve Telegram kullanıcı bilgileri dahil edilmez</span><span>✓ Proxy adresi, kullanıcı adı ve parola dahil edilmez</span><span>✓ API Hash, session verisi ve şifreleme anahtarı dahil edilmez</span><span>✓ Yalnızca sürüm, durum ve sayısal özetler bulunur</span></div>
+            <div class="settings-action-row"><a class="secondary button-link" id="download-diagnostics" href="/api/settings/diagnostics/report">Tanılama raporunu indir</a><div id="diagnostics-status" class="proxy-status">JSON raporu yalnızca bu cihazda oluşturulur.</div></div>
+          </div>
+        </div>
+        <div class="panel backup-panel" data-settings-section data-settings-keywords="yedek backup veritabanı güvenlik geri yükleme zip">
+          <div class="section-heading"><div><h2>Yedekleme ve veri güvenliği</h2><p>Veritabanı ile şifre çözme anahtarını içeren geri yüklenebilir ZIP oluşturun. Dosyayı gizli tutun.</p></div><button class="primary" id="create-backup">＋ Yeni yedek oluştur</button></div>
           <div id="backup-list" class="table-wrap"></div>
         </div>
       </section>
+      <footer class="app-footer">Pawgram, <a href="https://t.me/PawardCode" target="_blank" rel="noopener noreferrer">Paward</a> tarafından sevgiyle kodlanmıştır.</footer>
     </main>
   </div>
 
@@ -227,6 +402,14 @@
         <h2>Telegram hesabı ekle</h2><p>Numaranıza Telegram tarafından doğrulama kodu gönderilir.</p>
         <label>Hesap etiketi<input id="login-label" value="Ana hesap" maxlength="80"></label>
         <label>Telefon numarası<input id="login-phone" placeholder="+905xxxxxxxxx" autocomplete="tel"></label>
+        <label class="check-label span-2"><input id="login-use-proxy" type="checkbox" checked> Hesabı proxy üzerinden ekle</label>
+        <label>Proxy türü<select id="login-proxy-type"><option value="socks5">SOCKS5</option><option value="http">HTTP</option></select></label>
+        <label>Proxy IP / sunucu<input id="login-proxy-host" placeholder="proxy.example.com"></label>
+        <label>Proxy port<input id="login-proxy-port" type="number" min="1" max="65535" placeholder="1080"></label>
+        <label>Proxy kullanıcı adı <span>(varsa)</span><input id="login-proxy-username" autocomplete="username"></label>
+        <label>Proxy parola <span>(varsa)</span><input id="login-proxy-password" type="password" autocomplete="new-password"></label>
+        <div id="login-proxy-memory" class="compliance-note span-2"><strong>Tek seferlik ayar:</strong> İlk başarılı proxy şifreli olarak kaydedilir ve sonraki telefonlarda otomatik kullanılır.</div>
+        <div class="compliance-note span-2"><strong>IP sızıntısı koruması:</strong> Doğrulama kodu istenmeden önce proxy test edilir. Proxy çalışmazsa Telegram bağlantısı hiç başlatılmaz.</div>
         <button class="primary full" id="request-code">Doğrulama kodu iste</button>
       </div>
       <div id="login-step-code" class="hidden">
@@ -236,6 +419,27 @@
         <button class="primary full" id="verify-code">Hesabı bağla</button>
       </div>
       <div id="login-message" class="form-message hidden"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="session-detail-modal">
+    <div class="modal wide session-detail-modal">
+      <button class="modal-close" data-close-modal>×</button>
+      <div id="session-detail-content"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="group-detail-modal">
+    <div class="modal wide group-detail-modal">
+      <button class="modal-close" data-close-modal>×</button>
+      <div id="group-detail-content"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop hidden" id="log-detail-modal">
+    <div class="modal wide log-detail-modal">
+      <button class="modal-close" data-close-modal>×</button>
+      <div id="log-detail-content"></div>
     </div>
   </div>
 
@@ -360,6 +564,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=20260728-proxy-v9"></script>
+  <script src="/static/app.js?v=20260729-heartbeat-v1"></script>
 </body>
 </html>

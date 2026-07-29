@@ -1,9 +1,22 @@
 from pydantic import BaseModel, Field, field_validator
 
+from app.scheduling import normalize_datetime
+
 
 class LoginStartRequest(BaseModel):
     phone: str = Field(min_length=7, max_length=24)
     label: str = Field(default="Telegram hesabı", min_length=2, max_length=80)
+    use_proxy: bool = True
+    proxy_type: str = Field(default="socks5", pattern=r"^(socks5|http)$")
+    proxy_host: str | None = Field(default=None, max_length=255)
+    proxy_port: int | None = Field(default=None, ge=1, le=65535)
+    proxy_username: str | None = Field(default=None, max_length=255)
+    proxy_password: str | None = Field(default=None, max_length=512)
+
+    @field_validator("proxy_host")
+    @classmethod
+    def normalize_proxy_host(cls, value: str | None) -> str | None:
+        return value.strip() if value else None
 
 
 class LoginVerifyRequest(BaseModel):
@@ -12,9 +25,52 @@ class LoginVerifyRequest(BaseModel):
     password: str | None = Field(default=None, max_length=256)
 
 
+class LoginCancelRequest(BaseModel):
+    phone: str = Field(min_length=7, max_length=24)
+
+
 class GroupResolveRequest(BaseModel):
     session_id: int
     reference: str = Field(min_length=2, max_length=256)
+
+
+class GroupAccessBatchRequest(BaseModel):
+    group_ref: str = Field(min_length=2, max_length=256)
+    purpose: str = Field(default="source", pattern=r"^(source|target)$")
+    session_ids: list[int] = Field(min_length=1, max_length=500)
+    min_delay_seconds: int = Field(default=15, ge=0, le=3600)
+    max_delay_seconds: int = Field(default=30, ge=0, le=3600)
+
+    @field_validator("group_ref")
+    @classmethod
+    def normalize_group_ref(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("session_ids")
+    @classmethod
+    def normalize_session_ids(cls, value: list[int]) -> list[int]:
+        if any(session_id <= 0 for session_id in value):
+            raise ValueError("Session ID değerleri pozitif olmalıdır.")
+        return list(dict.fromkeys(value))
+
+
+class SessionHealthBatchRequest(BaseModel):
+    session_ids: list[int] = Field(min_length=1, max_length=500)
+    source_ref: str | None = Field(default=None, max_length=256)
+    target_ref: str | None = Field(default=None, max_length=256)
+
+    @field_validator("session_ids")
+    @classmethod
+    def normalize_session_ids(cls, value: list[int]) -> list[int]:
+        if any(session_id <= 0 for session_id in value):
+            raise ValueError("Session ID değerleri pozitif olmalıdır.")
+        return list(dict.fromkeys(value))
+
+    @field_validator("source_ref", "target_ref")
+    @classmethod
+    def normalize_optional_group_ref(cls, value: str | None) -> str | None:
+        normalized = value.strip() if value else ""
+        return normalized or None
 
 
 class TelegramSettingsRequest(BaseModel):
@@ -24,6 +80,29 @@ class TelegramSettingsRequest(BaseModel):
 
 class RotationSettingsRequest(BaseModel):
     daily_quota: int = Field(default=30, ge=1, le=1000)
+
+
+class HeartbeatSettingsRequest(BaseModel):
+    enabled: bool = False
+    interval_minutes: int = Field(default=60, ge=1, le=10080)
+    group_id: str = Field(default="", max_length=64)
+    message_template: str = Field(default="Merhabaa", min_length=1, max_length=4096)
+
+    @field_validator("group_id")
+    @classmethod
+    def normalize_group_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if normalized and not normalized.lstrip("-").isdigit():
+            raise ValueError("Heartbeat Group ID yalnızca sayısal Telegram grup ID'si olmalıdır.")
+        return normalized
+
+    @field_validator("message_template")
+    @classmethod
+    def normalize_message_template(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Heartbeat mesajı boş olamaz.")
+        return normalized
 
 
 class ProxySettingsRequest(BaseModel):
@@ -38,6 +117,24 @@ class ProxySettingsRequest(BaseModel):
     @classmethod
     def normalize_host(cls, value: str | None) -> str | None:
         return value.strip() if value else None
+
+
+class SessionInvitePolicyRequest(BaseModel):
+    batch_limit: int = Field(default=3, ge=1, le=20)
+    cooldown_minutes: int = Field(default=20, ge=5, le=240)
+
+
+class DefaultProxySettingsRequest(BaseModel):
+    proxy_type: str = Field(default="socks5", pattern=r"^(socks5|http)$")
+    host: str = Field(min_length=1, max_length=255)
+    port: int = Field(ge=1, le=65535)
+    username: str | None = Field(default=None, max_length=255)
+    password: str | None = Field(default=None, max_length=512)
+
+    @field_validator("host")
+    @classmethod
+    def normalize_host(cls, value: str) -> str:
+        return value.strip()
 
 
 class ProxyBulkImportRequest(BaseModel):
@@ -96,6 +193,16 @@ class JobCreateRequest(BaseModel):
     @classmethod
     def source_and_target_are_checked_later(cls, value: str) -> str:
         return value.strip()
+
+    @field_validator("scheduled_at")
+    @classmethod
+    def normalize_schedule(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        try:
+            return normalize_datetime(value)
+        except ValueError as error:
+            raise ValueError("Planlanan başlangıç geçerli bir tarih ve saat olmalıdır.") from error
 
 
 class CandidateSelectionRequest(BaseModel):

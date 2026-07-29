@@ -4,7 +4,7 @@ Telethon tabanlı, çoklu Telegram hesabı ve grup doğrulama yönetim paneli.
 
 ## Ticari lisans sistemi
 
-Pawgram 0.2.0 ile ayrı lisans sunucusu, haftalık/aylık/üç aylık kod üretimi, ilk aktivasyonda başlayan süre, cihaz sınırı, cihaz sıfırlama, lisans iptali ve süre uzatma desteği içerir. Lisans sunucusu Ed25519 ile kısa ömürlü kullanım belgesi imzalar; imza private key'i müşteri paketine girmez. Ticari derlemede lisans zorunluluğu EXE içine alınır ve `.env` dosyasından kapatılamaz.
+Pawgram 0.3.0; ayrı lisans sunucusu, haftalık/aylık/üç aylık kod üretimi, ilk aktivasyonda başlayan süre, cihaz sınırı, cihaz sıfırlama, lisans iptali ve süre uzatma desteği içerir. Lisans sunucusu Ed25519 ile kısa ömürlü kullanım belgesi imzalar; imza private key'i müşteri paketine girmez. Ticari derlemede lisans zorunluluğu EXE içine alınır ve `.env` dosyasından kapatılamaz.
 
 Kişisel kaynak sürümü mevcut sahibin kullanımını kilitlememek için lisanssız çalışır. Ticari dağıtım, HTTPS alan adı hazırlandıktan sonra `scripts/build_commercial.ps1` ile ayrı ve temiz bir pakete dönüştürülür. Sunucu kurulumu ve güvenlik şartları `license_server/README.md` dosyasında açıklanmıştır.
 
@@ -114,9 +114,8 @@ static/
   app.js                 API bağlantıları ve arayüz akışları
 ```
 
-## Sonraki geliştirme
+## Olası sonraki geliştirmeler
 
-1. Düşük hacimli kontrollü davet çalıştırıcısı
-2. Kalıcı arka plan worker'ı ve işlerin yeniden başlatma sonrası devamı
-3. Çok yöneticili rol sistemi ve ayrıntılı denetim kayıtları
-4. PostgreSQL ve Redis dağıtımı
+1. Çok yöneticili rol sistemi ve ayrıntılı denetim kayıtları
+2. İsteğe bağlı PostgreSQL ve Redis dağıtımı
+3. Yönetici tarafından yapılandırılabilen yedek saklama politikası

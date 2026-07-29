@@ -4,7 +4,10 @@ from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey,
+    Ed25519PublicKey,
+)
 
 from license_server.config import get_license_server_settings
 
@@ -42,7 +45,10 @@ def _private_key() -> Ed25519PrivateKey:
     path = get_license_server_settings().signing_key_path
     if not path.exists():
         raise RuntimeError("License signing key is missing. Run generate_keys.py first.")
-    return serialization.load_pem_private_key(path.read_bytes(), password=None)
+    private_key = serialization.load_pem_private_key(path.read_bytes(), password=None)
+    if not isinstance(private_key, Ed25519PrivateKey):
+        raise TypeError("License signing key must be an Ed25519 private key.")
+    return private_key
 
 
 def sign_payload(payload: dict) -> str:
@@ -52,9 +58,11 @@ def sign_payload(payload: dict) -> str:
 
 def verify_token(token: str) -> dict:
     encoded, signature = token.split(".", 1)
-    public_key: Ed25519PublicKey = serialization.load_pem_public_key(
+    public_key = serialization.load_pem_public_key(
         get_license_server_settings().public_key_path.read_bytes()
     )
+    if not isinstance(public_key, Ed25519PublicKey):
+        raise TypeError("License public key must be an Ed25519 public key")
     try:
         public_key.verify(_decode(signature), encoded.encode("ascii"))
     except InvalidSignature as error:

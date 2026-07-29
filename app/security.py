@@ -7,20 +7,30 @@ import time
 
 from cryptography.fernet import Fernet
 
-from app.config import APP_DIR, get_settings
+from app.config import get_settings
 
 
 def _secret_material() -> str:
     configured = get_settings().app_secret_key
     if configured != "change-this-in-production":
         return configured
-    secret_path = APP_DIR / "data" / ".secret_key"
+    secret_path = get_settings().database_path.resolve().parent / ".secret_key"
     secret_path.parent.mkdir(parents=True, exist_ok=True)
     if secret_path.exists():
-        return secret_path.read_text(encoding="utf-8").strip()
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
     generated = secrets.token_urlsafe(48)
-    secret_path.write_text(generated, encoding="utf-8")
-    return generated
+    try:
+        with secret_path.open("x", encoding="utf-8") as handle:
+            handle.write(generated)
+        return generated
+    except FileExistsError:
+        existing = secret_path.read_text(encoding="utf-8").strip()
+        if existing:
+            return existing
+        secret_path.write_text(generated, encoding="utf-8")
+        return generated
 
 
 def _fernet() -> Fernet:

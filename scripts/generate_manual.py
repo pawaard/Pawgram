@@ -7,7 +7,6 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "Pawgram_Kullanim_Kilavuzu.pdf"
 OUTPUT.parent.mkdir(parents=True, exist_ok=True)
@@ -62,7 +61,6 @@ def new_page(title: str):
 
 
 def ensure_space(required: float, title: str):
-    global y
     if y - required < 55:
         new_page(title)
 

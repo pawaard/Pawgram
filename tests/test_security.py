@@ -1,6 +1,15 @@
 import unittest
 
-from app.security import create_auth_token, decrypt, encrypt, hash_password, mask_phone, phone_key, verify_auth_token, verify_password
+from app.security import (
+    create_auth_token,
+    decrypt,
+    encrypt,
+    hash_password,
+    mask_phone,
+    phone_key,
+    verify_auth_token,
+    verify_password,
+)
 
 
 class SecurityTests(unittest.TestCase):
