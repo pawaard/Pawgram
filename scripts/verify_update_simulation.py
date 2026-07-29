@@ -297,12 +297,21 @@ def assert_port_available(port: int = 8000) -> None:
             raise RuntimeError(f"Updater simülasyonu için 127.0.0.1:{port} boş olmalı.") from error
 
 
-def simulate_success(customer_zip: Path, update_zip: Path, root: Path) -> dict:
+def configure_port(install: Path, port: int) -> None:
+    env_path = install / ".env"
+    lines = env_path.read_text(encoding="utf-8-sig").splitlines()
+    filtered = [line for line in lines if not line.startswith("APP_PORT=")]
+    env_path.write_text("\n".join([*filtered, f"APP_PORT={port}", ""]), encoding="utf-8")
+
+
+def simulate_success(customer_zip: Path, update_zip: Path, root: Path, port: int) -> dict:
     install = root / "install-success"
     customer_root = extract_release(customer_zip, root / "customer-success")
     staged = extract_release(update_zip, root / "update-success" / "extracted")
+    expected_version = (staged / "_internal" / "VERSION").read_text(encoding="utf-8").strip()
     install.mkdir(parents=True)
     shutil.copy2(customer_root / ".env", install / ".env")
+    configure_port(install, port)
     (install / "_internal").mkdir()
     (install / "Pawgram.exe").write_bytes(b"OLD-PAWGRAM-EXECUTABLE")
     (install / "_internal" / "VERSION").write_text("0.3.0", encoding="utf-8")
@@ -315,7 +324,7 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path) -> dict:
         if result.returncode != 0:
             raise RuntimeError(f"Başarılı update simülasyonu kurulamadı: {result.stderr.strip()}")
         process_id = find_pawgram_process(install / "Pawgram.exe")
-        live_health = wait_for_health()
+        live_health = wait_for_health(port)
         after = customer_snapshot(install)
         log_text = (install / "data" / "update.log").read_text(
             encoding="utf-8-sig", errors="replace"
@@ -334,7 +343,7 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path) -> dict:
         }
         if evidence != {
             "snapshot_preserved": True,
-            "installed_version": "0.4.1",
+            "installed_version": expected_version,
             "health_marker": True,
             "live_health": True,
             "backup_count": 0,
@@ -348,11 +357,13 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path) -> dict:
         stop_process(process_id or find_pawgram_process(install / "Pawgram.exe"))
 
 
-def simulate_rollback(customer_zip: Path, root: Path) -> dict:
+def simulate_rollback(customer_zip: Path, root: Path, port: int) -> dict:
     customer_root = extract_release(customer_zip, root / "customer-rollback")
     install = root / "install-rollback"
     shutil.copytree(customer_root, install)
-    seed_customer_data(install, "0.4.1")
+    configure_port(install, port)
+    customer_version = (install / "_internal" / "VERSION").read_text(encoding="utf-8").strip()
+    seed_customer_data(install, customer_version)
     before = customer_snapshot(install)
     executable_before = sha256(install / "Pawgram.exe")
     staged = root / "update-rollback" / "extracted" / "Pawgram"
@@ -369,7 +380,7 @@ def simulate_rollback(customer_zip: Path, root: Path) -> dict:
             process_id = find_pawgram_process(install / "Pawgram.exe")
             if process_id is None:
                 time.sleep(0.25)
-        live_health = wait_for_health()
+        live_health = wait_for_health(port)
         after = customer_snapshot(install)
         log_text = (install / "data" / "update.log").read_text(
             encoding="utf-8-sig", errors="replace"
@@ -387,7 +398,7 @@ def simulate_rollback(customer_zip: Path, root: Path) -> dict:
         if evidence != {
             "snapshot_preserved": True,
             "executable_restored": True,
-            "restored_version": "0.4.1",
+            "restored_version": customer_version,
             "rollback_logged": True,
             "old_version_restarted": True,
             "live_health": True,
@@ -402,13 +413,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--customer-zip", required=True, type=Path)
     parser.add_argument("--update-zip", required=True, type=Path)
+    parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--keep", action="store_true")
     args = parser.parse_args()
     customer_zip = args.customer_zip.resolve()
     update_zip = args.update_zip.resolve()
     if os.name != "nt":
         raise RuntimeError("Updater simülasyonu yalnızca Windows üzerinde çalışır.")
-    assert_port_available()
+    assert_port_available(args.port)
     temp_root = Path(tempfile.gettempdir()).resolve()
     simulation_root = Path(tempfile.mkdtemp(prefix="PawgramUpdate-Sim-")).resolve()
     if simulation_root.parent != temp_root or not simulation_root.name.startswith(
@@ -416,8 +428,8 @@ def main() -> int:
     ):
         raise RuntimeError("Updater simülasyon klasörü güvenli geçici dizinde değil.")
     try:
-        success = simulate_success(customer_zip, update_zip, simulation_root)
-        rollback = simulate_rollback(customer_zip, simulation_root)
+        success = simulate_success(customer_zip, update_zip, simulation_root, args.port)
+        rollback = simulate_rollback(customer_zip, simulation_root, args.port)
         print(f"Başarılı update simülasyonu: {success}")
         print(f"Rollback simülasyonu: {rollback}")
         print("Updater install/restart/veri koruma/rollback doğrulaması başarılı.")
