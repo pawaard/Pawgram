@@ -51,6 +51,7 @@ from app.release_history import (
     initialize_release_tracking,
     release_notes_overview,
 )
+from app.runtime_control import schedule_shutdown, shutdown_available
 from app.scheduling import next_job_run
 from app.schemas import (
     ActivityScanRequest,
@@ -98,6 +99,7 @@ from app.telegram_service import (
 )
 from app.updater import (
     UPDATE_MANIFEST_URL,
+    check_and_stage_update,
     current_version,
     is_newer_version,
     mark_update_healthy,
@@ -816,6 +818,49 @@ async def fetch_update_status() -> dict:
 @app.get("/api/settings/update-status")
 async def settings_update_status():
     return await fetch_update_status()
+
+
+@app.post("/api/settings/update-install")
+async def settings_update_install():
+    if not shutdown_available():
+        raise HTTPException(
+            status_code=503,
+            detail="Pawgram yeniden başlatma denetimine ulaşılamadı.",
+        )
+    status = await fetch_update_status()
+    if not status["reachable"]:
+        raise HTTPException(status_code=503, detail=status["message"])
+    if not status["update_available"]:
+        raise HTTPException(status_code=409, detail="Kurulabilecek yeni bir Pawgram sürümü bulunamadı.")
+    try:
+        staged = await asyncio.to_thread(check_and_stage_update, raise_errors=True)
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    if not staged:
+        raise HTTPException(status_code=409, detail="Güncelleme artık kullanılamıyor veya zaten kurulu.")
+    if not schedule_shutdown():
+        raise HTTPException(
+            status_code=503,
+            detail="Güncelleme hazırlandı ancak Pawgram yeniden başlatma denetimine ulaşılamadı.",
+        )
+    add_log(
+        "info",
+        "system",
+        f"Pawgram {status['latest_version']} güncellemesi panelden başlatıldı; uygulama yeniden başlatılıyor.",
+    )
+    return {
+        "started": True,
+        "latest_version": status["latest_version"],
+        "message": "Güncelleme indirildi; Pawgram kapanıp yeni sürümle yeniden başlayacak.",
+    }
+
+
+@app.post("/api/system/shutdown")
+async def system_shutdown():
+    add_log("info", "system", "Pawgram kullanıcı tarafından panelden kapatılıyor.")
+    if not schedule_shutdown():
+        raise HTTPException(status_code=503, detail="Pawgram kapatma denetimine ulaşılamadı.")
+    return {"closing": True, "message": "Pawgram kapatılıyor."}
 
 
 @app.get("/api/license/status")

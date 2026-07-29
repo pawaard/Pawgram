@@ -81,6 +81,11 @@ Yeni sürüm bulunduğunda:
 5. Başlangıç health işareti doğrulanır.
 6. Başlangıç başarısızsa eski EXE ve runtime geri yüklenip yeniden başlatılır.
 
+Ayarlar ekranındaki **Güncellemeleri kontrol et** düğmesi yeni sürümü elle kontrol eder.
+Yeni sürüm varsa **İndir ve yeniden başlat** düğmesi görünür. Üst çubuktaki
+**Programı kapat** düğmesi Pawgram arka plan sürecini tamamen kapatır; Görev
+Yöneticisi kullanmak gerekmez.
+
 Session'lar, proxy ayarları, gruplar, davet ayarları, Heartbeat, lisans ve yerel
 tercihler güncelleme sırasında korunur. Ayrıntılar `data/update.log` dosyasına
 yazılır.

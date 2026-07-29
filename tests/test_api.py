@@ -30,6 +30,35 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
+    def test_runtime_shutdown_and_manual_update_endpoints(self):
+        update_status = {
+            "reachable": True,
+            "checked_at": "2026-07-29T12:00:00+00:00",
+            "current_version": "0.4.2",
+            "latest_version": "0.4.3",
+            "update_available": True,
+            "channel": "stable",
+            "message": "0.4.3 sürümü kullanılabilir.",
+        }
+        with (
+            patch("app.main.shutdown_available", return_value=True),
+            patch("app.main.fetch_update_status", new=AsyncMock(return_value=update_status)),
+            patch("app.main.check_and_stage_update", return_value=True) as stage_update,
+            patch("app.main.schedule_shutdown", return_value=True) as schedule,
+        ):
+            response = self.client.post("/api/settings/update-install")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["started"])
+        self.assertEqual(response.json()["latest_version"], "0.4.3")
+        stage_update.assert_called_once_with(raise_errors=True)
+        schedule.assert_called_once_with()
+
+        with patch("app.main.schedule_shutdown", return_value=True) as schedule:
+            response = self.client.post("/api/system/shutdown")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["closing"])
+        schedule.assert_called_once_with()
+
     def test_commercial_api_is_locked_without_valid_license(self):
         invalid = {
             "required": True,

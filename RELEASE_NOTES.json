@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.4.3",
+    "release_date": "2026-07-29",
+    "title": "Ekran uyumu ve uygulama kontrolleri",
+    "changes": [
+      "Pawgram tarayıcının gerçek kullanılabilir genişlik ve yüksekliğine otomatik uyarlanıyor",
+      "Telegram hesap formu 1366x768 ekranlarda kompakt ve kaydırılabilir açılıyor",
+      "1920x1080 ekranlarda daha geniş iki sütunlu form düzeni kullanılıyor",
+      "Eski arayüz dosyalarının tarayıcı önbelleğinden yüklenmesi engellendi",
+      "Pawgram'ı tamamen kapatan program kapatma düğmesi eklendi",
+      "Güncellemeyi panelden kontrol etme, indirme ve yeniden başlatma akışı eklendi"
+    ]
+  },
+  {
     "version": "0.4.2",
     "release_date": "2026-07-29",
     "title": "Otomatik güncelleme kurulumu düzeltildi",

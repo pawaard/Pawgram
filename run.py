@@ -22,6 +22,7 @@ import uvicorn
 
 from app.config import APP_DIR, get_settings
 from app.main import app
+from app.runtime_control import set_shutdown_callback
 from app.updater import check_and_stage_update, clean_abandoned_update_directories
 
 
@@ -146,14 +147,21 @@ def main() -> int:
         browser_timer = threading.Timer(1.4, open_panel, args=(port,))
         browser_timer.daemon = True
         browser_timer.start()
-        uvicorn.run(
-            app,
-            host="127.0.0.1",
-            port=port,
-            reload=False,
-            access_log=False,
-            log_level="warning",
+        server = uvicorn.Server(
+            uvicorn.Config(
+                app,
+                host="127.0.0.1",
+                port=port,
+                reload=False,
+                access_log=False,
+                log_level="warning",
+            )
         )
+        set_shutdown_callback(lambda: setattr(server, "should_exit", True))
+        try:
+            server.run()
+        finally:
+            set_shutdown_callback(None)
         return 0
     except Exception as error:  # noqa: BLE001 - final GUI boundary must report startup failures
         show_message(f"Pawgram başlatılamadı:\n\n{error}", error=True)

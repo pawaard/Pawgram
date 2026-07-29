@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=20260729-customer-release-v2">
+  <link rel="stylesheet" href="/static/features.css?v=0.4.3">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -45,6 +45,7 @@
           <span class="system-pill"><i></i> Sistem çalışıyor</span>
           <span class="session-pill" id="top-session-count">0 session</span>
           <button class="ghost" id="logout-button">Çıkış</button>
+          <button class="danger-button app-close-button" id="shutdown-app" title="Pawgram uygulamasını tamamen kapat"><span aria-hidden="true">⏻</span><span class="app-close-label">Programı kapat</span></button>
         </div>
       </header>
 
@@ -378,7 +379,7 @@
               <div><small>SON YAYIN</small><strong id="settings-latest-version">Henüz kontrol edilmedi</strong></div>
               <div><small>SON KONTROL</small><strong id="settings-update-checked">—</strong></div>
             </div>
-            <div class="settings-action-row"><button class="secondary" id="check-settings-update">Güncellemeyi kontrol et</button><div id="settings-update-message" class="proxy-status">Kontrol yalnızca sürüm bilgisini okur; paket indirmez veya kurmaz.</div></div>
+            <div class="settings-action-row update-actions"><button class="secondary" id="check-settings-update">Güncellemeleri kontrol et</button><button class="primary hidden" id="install-settings-update">İndir ve yeniden başlat</button><div id="settings-update-message" class="proxy-status">Güncelleme kontrolü resmi imzalı GitHub sürümünü kullanır.</div></div>
           </div>
           <div class="panel" data-settings-section data-settings-keywords="sürüm geçmişi yenilikler değişiklikler">
             <div class="section-heading"><div><h2>Sürüm geçmişi</h2><p>Pawgram güncellemeleri ve yayın notları</p></div><span class="badge active">Güncel</span></div>
@@ -579,6 +580,9 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script src="/static/app.js?v=20260729-customer-release-v2"></script>
+  <div id="runtime-overlay" class="runtime-overlay hidden">
+    <div><span class="runtime-spinner" aria-hidden="true"></span><h2 id="runtime-overlay-title">Pawgram kapatılıyor</h2><p id="runtime-overlay-message">Bu tarayıcı sekmesini kapatabilirsiniz.</p></div>
+  </div>
+  <script src="/static/app.js?v=0.4.3"></script>
 </body>
 </html>

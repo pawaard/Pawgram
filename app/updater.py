@@ -321,8 +321,14 @@ try {
 '''
 
 
-def check_and_stage_update() -> bool:
-    if not getattr(sys, "frozen", False) or os.environ.get("PAWGRAM_SKIP_UPDATE") == "1":
+def check_and_stage_update(*, raise_errors: bool = False) -> bool:
+    if not getattr(sys, "frozen", False):
+        if raise_errors:
+            raise RuntimeError("Güncelleme kurulumu yalnızca paketlenmiş Pawgram uygulamasında kullanılabilir.")
+        return False
+    if os.environ.get("PAWGRAM_SKIP_UPDATE") == "1":
+        if raise_errors:
+            raise RuntimeError("Güncelleme kurulumu bu çalıştırmada devre dışı bırakılmış.")
         return False
     try:
         response = httpx.get(
@@ -375,8 +381,12 @@ def check_and_stage_update() -> bool:
             f"{current_version()} sürümünden {payload['version']} sürümüne güncelleme indirildi; kurulum başlatıldı."
         )
         return True
-    except Exception as error:  # noqa: BLE001 - update failure must never prevent the installed app starting
+    except Exception as error:
         _write_log(f"Güncelleme kontrolü atlandı: {str(error) or error.__class__.__name__}")
+        if raise_errors:
+            raise RuntimeError(
+                f"Güncelleme indirilemedi veya hazırlanamadı: {str(error) or error.__class__.__name__}"
+            ) from error
         return False
 
 

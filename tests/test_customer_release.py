@@ -19,12 +19,28 @@ from scripts.verify_customer_release import verify_release_folder, verify_releas
 
 class CustomerReleaseTests(unittest.TestCase):
     def test_session_login_modal_scrolls_on_short_screens(self):
-        css = (Path(__file__).resolve().parent.parent / "static" / "features.css").read_text(
-            encoding="utf-8"
-        )
+        static_root = Path(__file__).resolve().parent.parent / "static"
+        css = (static_root / "features.css").read_text(encoding="utf-8")
+        html = (static_root / "index.html").read_text(encoding="utf-8")
+        javascript = (static_root / "app.js").read_text(encoding="utf-8")
         self.assertIn("#session-modal .modal", css)
-        self.assertIn("max-height: calc(100dvh - 40px)", css)
+        self.assertIn("--pawgram-viewport-height", css)
         self.assertIn("overflow-y: auto", css)
+        self.assertIn("#login-step-phone { display: grid", css)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
+        self.assertIn("@media (max-height: 800px)", css)
+        self.assertIn('/static/features.css?v=0.4.3', html)
+        self.assertIn("syncViewportMetrics", javascript)
+        self.assertIn('root.dataset.viewportMode', javascript)
+
+    def test_customer_ui_exposes_runtime_and_update_controls(self):
+        static_root = Path(__file__).resolve().parent.parent / "static"
+        html = (static_root / "index.html").read_text(encoding="utf-8")
+        javascript = (static_root / "app.js").read_text(encoding="utf-8")
+        for element_id in ("shutdown-app", "install-settings-update", "runtime-overlay"):
+            self.assertIn(f'id="{element_id}"', html)
+        self.assertIn("installSettingsUpdate", javascript)
+        self.assertIn("shutdownApplication", javascript)
 
     def test_customer_ui_describes_current_invite_rotation(self):
         html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text(

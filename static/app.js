@@ -1,7 +1,33 @@
-const state = { sessions: [], groups: [], jobs: [], logs: [], pendingLogs: [], logVisibleCount: 100, logsAutoRefresh: true, logsLastSeenId: 0, activityScans: [], heartbeat: null, releaseNotes: null, groupAccessBatches: [], sessionHealthBatches: [], health: null, license: null, telegramSettings: null, rotationSettings: null, settingsOverview: null, onboarding: null, defaultLoginProxy: null, currentJobId: null, currentActivityScanId: null, currentGroupAccessBatchId: null, currentGroupAccessDetail: null, currentGroupSessionId: null, currentSessionHealthBatchId: null, runningScanIds: new Set(), loginPhone: "" };
+const state = { sessions: [], groups: [], jobs: [], logs: [], pendingLogs: [], logVisibleCount: 100, logsAutoRefresh: true, logsLastSeenId: 0, activityScans: [], heartbeat: null, releaseNotes: null, groupAccessBatches: [], sessionHealthBatches: [], health: null, license: null, telegramSettings: null, rotationSettings: null, settingsOverview: null, updateStatus: null, onboarding: null, defaultLoginProxy: null, currentJobId: null, currentActivityScanId: null, currentGroupAccessBatchId: null, currentGroupAccessDetail: null, currentGroupSessionId: null, currentSessionHealthBatchId: null, runningScanIds: new Set(), loginPhone: "" };
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+let viewportSyncFrame = null;
+
+function syncViewportMetrics() {
+  const viewport = window.visualViewport;
+  const width = Math.round(viewport?.width || window.innerWidth);
+  const height = Math.round(viewport?.height || window.innerHeight);
+  const root = document.documentElement;
+  root.style.setProperty("--pawgram-viewport-width", `${width}px`);
+  root.style.setProperty("--pawgram-viewport-height", `${height}px`);
+  root.dataset.viewportMode = width >= 1600 && height >= 900
+    ? "wide"
+    : (width <= 1366 || height <= 800 ? "compact" : "standard");
+}
+
+function scheduleViewportSync() {
+  if (viewportSyncFrame !== null) cancelAnimationFrame(viewportSyncFrame);
+  viewportSyncFrame = requestAnimationFrame(() => {
+    viewportSyncFrame = null;
+    syncViewportMetrics();
+  });
+}
+
+syncViewportMetrics();
+window.addEventListener("resize", scheduleViewportSync, { passive: true });
+window.visualViewport?.addEventListener("resize", scheduleViewportSync, { passive: true });
 
 function errorMessage(value, fallback = "İşlem tamamlanamadı.") {
   if (value === null || value === undefined || value === "") return fallback;
@@ -1474,24 +1500,95 @@ async function loadSettingsOverview() {
 
 async function checkSettingsUpdate() {
   const button = $("#check-settings-update");
+  const installButton = $("#install-settings-update");
   button.disabled = true;
   button.classList.add("is-loading");
   button.textContent = "Kontrol ediliyor";
   $("#settings-update-message").textContent = "Resmi imzalı manifest okunuyor…";
   try {
     const status = await api("/api/settings/update-status");
+    state.updateStatus = status;
     $("#settings-latest-version").textContent = status.latest_version || "Yayın bulunamadı";
     $("#settings-update-checked").textContent = formatDateTime(status.checked_at);
     $("#settings-update-message").textContent = status.message;
     $("#settings-update-message").classList.toggle("success", status.reachable && !status.update_available);
     $("#settings-update-message").classList.toggle("error", !status.reachable);
+    installButton.classList.toggle("hidden", !status.update_available);
+    installButton.textContent = status.update_available
+      ? `${status.latest_version} sürümünü indir ve yeniden başlat`
+      : "İndir ve yeniden başlat";
   } catch (error) {
+    state.updateStatus = null;
     $("#settings-update-message").textContent = error.message;
     $("#settings-update-message").classList.add("error");
+    installButton.classList.add("hidden");
   } finally {
     button.disabled = false;
     button.classList.remove("is-loading");
     button.textContent = "Güncellemeyi kontrol et";
+  }
+}
+
+function showRuntimeOverlay(title, message) {
+  $("#runtime-overlay-title").textContent = title;
+  $("#runtime-overlay-message").textContent = message;
+  $("#runtime-overlay").classList.remove("hidden");
+}
+
+async function waitForApplicationRestart(expectedVersion) {
+  let observedOffline = false;
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/api/health?restart_check=${Date.now()}`, {cache:"no-store"});
+      if (response.ok) {
+        const health = await response.json();
+        if (observedOffline || health.version === expectedVersion || health.build?.startsWith(`${expectedVersion}-`)) {
+          window.location.reload();
+          return;
+        }
+      }
+    } catch (_) {
+      observedOffline = true;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  $("#runtime-overlay-message").textContent = "Pawgram yeniden başladıysa bu sayfayı yenileyin.";
+}
+
+async function installSettingsUpdate() {
+  const status = state.updateStatus;
+  if (!status?.update_available) return checkSettingsUpdate();
+  const checkButton = $("#check-settings-update");
+  const installButton = $("#install-settings-update");
+  checkButton.disabled = true;
+  installButton.disabled = true;
+  installButton.classList.add("is-loading");
+  installButton.textContent = "İndiriliyor ve hazırlanıyor";
+  $("#settings-update-message").textContent = `${status.latest_version} güvenli biçimde indiriliyor…`;
+  try {
+    const result = await api("/api/settings/update-install", {method:"POST"});
+    showRuntimeOverlay("Pawgram güncelleniyor", result.message);
+    waitForApplicationRestart(result.latest_version);
+  } catch (error) {
+    $("#settings-update-message").textContent = error.message;
+    $("#settings-update-message").classList.add("error");
+    checkButton.disabled = false;
+    installButton.disabled = false;
+    installButton.classList.remove("is-loading");
+    installButton.textContent = `${status.latest_version} sürümünü indir ve yeniden başlat`;
+  }
+}
+
+async function shutdownApplication() {
+  const button = $("#shutdown-app");
+  button.disabled = true;
+  try {
+    const result = await api("/api/system/shutdown", {method:"POST"});
+    showRuntimeOverlay("Pawgram kapatılıyor", `${result.message} Bu tarayıcı sekmesini kapatabilirsiniz.`);
+  } catch (error) {
+    button.disabled = false;
+    toast(error.message);
   }
 }
 
@@ -2172,6 +2269,8 @@ $("#save-api-settings").addEventListener("click", saveTelegramSettings);
 $("#save-rotation-settings").addEventListener("click", saveRotationSettings);
 $("#refresh-settings-overview").addEventListener("click", () => runUi(loadSettingsOverview()));
 $("#check-settings-update").addEventListener("click", () => runUi(checkSettingsUpdate()));
+$("#install-settings-update").addEventListener("click", () => runUi(installSettingsUpdate()));
+$("#shutdown-app").addEventListener("click", () => runUi(shutdownApplication()));
 $("#acknowledge-release-notes").addEventListener("click", () => runUi(acknowledgeReleaseNotes()));
 $("#download-diagnostics").addEventListener("click", () => {
   $("#diagnostics-status").textContent = "Maskelenmiş tanılama raporu hazırlanıyor…";
