@@ -856,6 +856,119 @@ class InviteExecutorTests(unittest.TestCase):
         self.assertEqual(first_session["status"], "batch_wait")
         self.assertEqual(client_factory.await_count, 2)
 
+    def test_target_permission_failure_hands_candidate_to_next_session(self):
+        from app.database import get_connection, utc_now
+        from app.telegram_service import execute_invite_job
+
+        now = utc_now()
+        with get_connection() as connection:
+            second_session_id = connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    display_name, status, proxy_enabled, proxy_last_status,
+                    created_at, updated_at
+                ) VALUES ('Davet 2', '+90 ***', 'enc2', 'session2', 'Davet 2',
+                          'active', 1, 'success', ?, ?)
+                """,
+                (now, now),
+            ).lastrowid
+
+        target = Chat(200, "Hedef", ChatPhotoEmpty(), 0, datetime.now(UTC), 1, creator=True)
+
+        class InviteClient:
+            async def __call__(self, request):
+                if isinstance(request, GetUsersRequest):
+                    input_user = request.id[0]
+                    return [User(input_user.user_id, access_hash=input_user.access_hash)]
+                if isinstance(request, AddChatUserRequest):
+                    return None
+                raise AssertionError(type(request).__name__)
+
+            async def disconnect(self):
+                return None
+
+        clients = {self.session_id: InviteClient(), second_session_id: InviteClient()}
+        with patch(
+            "app.telegram_service._client_for",
+            new=AsyncMock(side_effect=lambda session_id: clients[session_id]),
+        ), patch(
+            "app.telegram_service._resolve_entity",
+            new=AsyncMock(return_value=target),
+        ), patch(
+            "app.telegram_service._entity_can_invite_users",
+            side_effect=[False, True],
+        ), patch("app.telegram_service.asyncio.sleep", new=AsyncMock()):
+            asyncio.run(execute_invite_job(self.job_id))
+
+        with get_connection() as connection:
+            job = connection.execute(
+                "SELECT status, session_id, succeeded FROM transfer_jobs WHERE id=?",
+                (self.job_id,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT status FROM job_candidates WHERE job_id=?", (self.job_id,)
+            ).fetchone()
+            handoff = connection.execute(
+                """
+                SELECT message FROM system_logs
+                WHERE job_id=? AND category='invite_handoff'
+                ORDER BY id DESC LIMIT 1
+                """,
+                (self.job_id,),
+            ).fetchone()
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(job["session_id"], second_session_id)
+        self.assertEqual(job["succeeded"], 1)
+        self.assertEqual(candidate["status"], "invited")
+        self.assertIn(f"Session #{second_session_id} ile hemen devam ediyor", handoff["message"])
+
+    def test_all_target_permission_failures_stop_with_actionable_error(self):
+        from app.database import get_connection, utc_now
+        from app.telegram_service import execute_invite_job
+
+        now = utc_now()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    display_name, status, proxy_enabled, proxy_last_status,
+                    created_at, updated_at
+                ) VALUES ('Davet 2', '+90 ***', 'enc2', 'session2', 'Davet 2',
+                          'active', 1, 'success', ?, ?)
+                """,
+                (now, now),
+            )
+
+        target = Chat(200, "Hedef", ChatPhotoEmpty(), 0, datetime.now(UTC), 1, creator=True)
+
+        class NoopClient:
+            async def disconnect(self):
+                return None
+
+        with patch(
+            "app.telegram_service._client_for", new=AsyncMock(return_value=NoopClient())
+        ), patch(
+            "app.telegram_service._resolve_entity", new=AsyncMock(return_value=target)
+        ), patch("app.telegram_service._entity_can_invite_users", return_value=False):
+            asyncio.run(execute_invite_job(self.job_id))
+
+        with get_connection() as connection:
+            job = connection.execute(
+                "SELECT status, last_error, processed FROM transfer_jobs WHERE id=?",
+                (self.job_id,),
+            ).fetchone()
+            candidate = connection.execute(
+                "SELECT status, processed_at FROM job_candidates WHERE job_id=?",
+                (self.job_id,),
+            ).fetchone()
+        self.assertEqual(job["status"], "failed")
+        self.assertIn("Sessionları gruba hazırla", job["last_error"])
+        self.assertEqual(job["processed"], 0)
+        self.assertEqual(candidate["status"], "eligible")
+        self.assertIsNone(candidate["processed_at"])
+
     def test_proxy_failure_pauses_job_without_consuming_candidate(self):
         from app.database import get_connection
         from app.telegram_service import ProxyUnavailableError, execute_invite_job

@@ -164,7 +164,7 @@ class ActivityScanRequest(BaseModel):
 
 class ActivityTransferRequest(BaseModel):
     target_ref: str = Field(min_length=2, max_length=256)
-    max_users: int = Field(default=100, ge=1, le=1000)
+    max_users: int = Field(default=100, ge=1)
     min_delay_seconds: int = Field(default=20, ge=0, le=3600)
     max_delay_seconds: int = Field(default=40, ge=0, le=7200)
     daily_limit: int = Field(default=50, ge=1, le=1000)
@@ -180,7 +180,7 @@ class JobCreateRequest(BaseModel):
     session_id: int
     source_ref: str = Field(min_length=2, max_length=256)
     target_ref: str = Field(min_length=2, max_length=256)
-    max_users: int = Field(default=25, ge=1, le=1000)
+    max_users: int = Field(default=25, ge=1)
     min_delay_seconds: int = Field(default=20, ge=0, le=3600)
     max_delay_seconds: int = Field(default=40, ge=0, le=7200)
     daily_limit: int = Field(default=50, ge=1, le=1000)
@@ -206,7 +206,7 @@ class JobCreateRequest(BaseModel):
 
 
 class CandidateSelectionRequest(BaseModel):
-    candidate_ids: list[int] = Field(default_factory=list, max_length=1000)
+    candidate_ids: list[int] = Field(default_factory=list)
 
 
 class LicenseActivationRequest(BaseModel):

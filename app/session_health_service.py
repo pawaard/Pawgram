@@ -15,6 +15,7 @@ from app.session_operation import (
 from app.telegram_service import (
     ProxyUnavailableError,
     _client_for,
+    _entity_can_invite_users,
     _private_invite_hash,
     _resolve_entity,
 )
@@ -105,14 +106,6 @@ async def _inspect_membership(client, reference: str):
         except UserNotParticipantError:
             return False, entity, "Session grubun üyesi değil."
     return True, entity, "Session gruba erişebiliyor."
-
-
-def _can_invite_users(entity) -> bool:
-    rights = getattr(entity, "admin_rights", None)
-    return bool(
-        getattr(entity, "creator", False)
-        or (rights and getattr(rights, "invite_users", False))
-    )
 
 
 def _session_wait_reason(session: dict) -> str | None:
@@ -278,7 +271,7 @@ async def execute_session_health_batch(batch_id: int) -> None:
                     )
                     reasons.append(f"Hedef: {target_reason}")
                     if target_access and target_entity is not None:
-                        target_can_invite = _can_invite_users(target_entity)
+                        target_can_invite = _entity_can_invite_users(target_entity)
                         reasons.append(
                             "Hedefte üye ekleme yetkisi var."
                             if target_can_invite

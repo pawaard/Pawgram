@@ -88,6 +88,46 @@ class ProxyUnavailableError(RuntimeError):
     pass
 
 
+class TargetGroupUnavailableError(RuntimeError):
+    """Raised when one invite session cannot use the requested target group."""
+
+    def __init__(self, session_id: int, message: str):
+        self.session_id = session_id
+        super().__init__(message)
+
+
+def _entity_can_invite_users(entity) -> bool:
+    """Return the effective Telegram invite permission for the current session."""
+    if getattr(entity, "creator", False):
+        return True
+
+    admin_rights = getattr(entity, "admin_rights", None)
+    if admin_rights and getattr(admin_rights, "invite_users", False):
+        return True
+
+    if any(
+        bool(getattr(entity, attribute, False))
+        for attribute in ("left", "kicked", "deactivated")
+    ):
+        return False
+
+    is_basic_group = isinstance(entity, Chat)
+    is_megagroup = bool(getattr(entity, "megagroup", False))
+    if not (is_basic_group or is_megagroup):
+        return False
+
+    personal_restrictions = getattr(entity, "banned_rights", None)
+    if personal_restrictions and getattr(personal_restrictions, "invite_users", False):
+        return False
+
+    default_restrictions = getattr(entity, "default_banned_rights", None)
+    if default_restrictions is not None:
+        return not bool(getattr(default_restrictions, "invite_users", False))
+
+    # Legacy basic groups allow members to add users unless Telegram reports a ban.
+    return is_basic_group
+
+
 def _load_default_login_proxy() -> dict | None:
     encrypted = get_app_setting(DEFAULT_LOGIN_PROXY_SETTING)
     if encrypted:
@@ -1096,10 +1136,7 @@ async def resolve_group(session_id: int, reference: str) -> dict:
             raise TypeError("Girilen referans bir Telegram grubu veya kanalı değil.")
         kind = "megagroup" if getattr(entity, "megagroup", False) else "channel" if isinstance(entity, Channel) else "group"
         admin_rights = getattr(entity, "admin_rights", None)
-        can_invite_users = bool(
-            getattr(entity, "creator", False)
-            or (admin_rights and getattr(admin_rights, "invite_users", False))
-        )
+        can_invite_users = _entity_can_invite_users(entity)
         source_suitable = kind in {"group", "megagroup"}
         result = ResolvedGroup(
             id=entity.id,
@@ -1156,10 +1193,7 @@ async def list_groups(session_id: int) -> list[dict]:
                 )
                 creator = bool(getattr(entity, "creator", False))
                 admin_rights = getattr(entity, "admin_rights", None)
-                can_invite_users = bool(
-                    creator
-                    or (admin_rights and getattr(admin_rights, "invite_users", False))
-                )
+                can_invite_users = _entity_can_invite_users(entity)
                 source_suitable = kind in {"group", "megagroup"}
                 groups.append(
                     {
@@ -1224,14 +1258,12 @@ async def preview_job_candidates(job: dict) -> dict:
             raise TypeError("Çekilecek ve gönderilecek alanlar Telegram grubu olmalı.")
 
         admin_rights = getattr(target, "admin_rights", None)
-        can_invite = bool(
-            getattr(target, "creator", False)
-            or (admin_rights and getattr(admin_rights, "invite_users", False))
-        )
+        can_invite = _entity_can_invite_users(target)
         if not can_invite:
             raise RuntimeError(
                 "Seçilen session hedef grupta üye ekleme yetkisine sahip değil. "
-                "Hesabı hedef grupta 'Kullanıcı davet et' yetkili yönetici yapın."
+                "Session'ı hedef gruba katın ve grubun genel 'Üye ekle' iznini açın "
+                "veya hesabı 'Kullanıcı davet et' yetkili yönetici yapın."
             )
 
         target_member_ids: set[int] = set()
@@ -1599,14 +1631,14 @@ def select_next_available_session(
                 f"günlük davet kotası dolu: {int(row.get('invite_count') or 0)}/{daily_limit}; "
                 f"yeniden deneme: {quota_resume.isoformat()}"
             )
-        if row.get("locked_session_id") is not None or session_id in excluded:
+        if row.get("locked_session_id") is not None:
             lock_retry = current_time + timedelta(seconds=5)
             session_resume = max(session_resume, lock_retry) if session_resume else lock_retry
-            if row.get("locked_session_id") is not None:
-                operation = row.get("operation_label") or row.get("operation_type") or "başka bir Telegram işlemi"
-                reasons.append(f"session işlem kilidi altında: {operation}")
-            if session_id in excluded:
-                reasons.append("bu seçim turunda geçici olarak hariç tutuldu")
+            operation = row.get("operation_label") or row.get("operation_type") or "başka bir Telegram işlemi"
+            reasons.append(f"session işlem kilidi altında: {operation}")
+        if session_id in excluded:
+            reasons.append("hedef gruba erişemediği veya üye ekleme yetkisi olmadığı için bu iş turunda hariç tutuldu")
+            permanently_rejected = True
         if permanently_rejected:
             audit.append((row, status, False, reasons))
             continue
@@ -1719,11 +1751,12 @@ async def _open_invite_session(
         target = await asyncio.wait_for(_resolve_entity(client, job["target_ref"]), timeout=30)
         if not isinstance(target, (Channel, Chat)):
             raise TypeError("Hedef Telegram grubu olmalıdır.")
-        rights = getattr(target, "admin_rights", None)
-        if not (getattr(target, "creator", False) or (rights and getattr(rights, "invite_users", False))):
-            raise RuntimeError(
+        if not _entity_can_invite_users(target):
+            raise TargetGroupUnavailableError(
+                session_id,
                 f"Session #{session_id} hedef grupta üye ekleme yetkisine sahip değil. "
-                "Hesabı hedef grupta 'Kullanıcı davet et' yetkili yönetici yapın."
+                "Session'ı hedef gruba katın ve grubun genel 'Üye ekle' iznini açın "
+                "veya hesabı 'Kullanıcı davet et' yetkili yönetici yapın."
             )
 
         source_input = None
@@ -1967,6 +2000,7 @@ async def execute_invite_job(job_id: int) -> None:
     last_unavailable_error: str | None = None
     pending_handoff_from_session_id: int | None = None
     pending_handoff_reason: str | None = None
+    target_unavailable_session_ids: set[int] = set()
 
     try:
         while candidate_index < len(candidates):
@@ -1996,10 +2030,22 @@ async def execute_invite_job(job_id: int) -> None:
                         preferred_session_id=preferred_session_id,
                         working_start=str(job.get("working_start") or "00:00"),
                         working_end=str(job.get("working_end") or "23:59"),
+                        excluded_session_ids=target_unavailable_session_ids,
                         job_id=job_id,
                     )
                 preferred_session_id = None
                 if selection.session_id is None:
+                    if target_unavailable_session_ids and selection.resume_at is None:
+                        rejected = ", ".join(
+                            f"#{session_id}" for session_id in sorted(target_unavailable_session_ids)
+                        )
+                        raise RuntimeError(
+                            "Hedef grupta kullanılabilir üye ekleme yetkisine sahip Telegram session "
+                            f"bulunamadı. Reddedilen session'lar: {rejected}. "
+                            "Sessionlar ekranındaki 'Sessionları gruba hazırla' işlemini çalıştırın; "
+                            "grubun genel 'Üye ekle' iznini açın veya hesaplara "
+                            "'Kullanıcı davet et' yönetici yetkisi verin."
+                        )
                     _schedule_invite_for_available_session(
                         job_id,
                         selection,
@@ -2048,6 +2094,27 @@ async def execute_invite_job(job_id: int) -> None:
                         "Session proxy nedeniyle kullanılamıyor",
                         f"Session #{selected_session_id} atlandı. {message}",
                         "settings",
+                    )
+                    last_session_id = selected_session_id
+                    continue
+                except TargetGroupUnavailableError as error:
+                    reason = str(error)
+                    last_unavailable_error = reason
+                    target_unavailable_session_ids.add(selected_session_id)
+                    pending_handoff_from_session_id = selected_session_id
+                    pending_handoff_reason = reason
+                    add_log(
+                        "warning",
+                        "invite_target_access",
+                        f"{reason} Sıradaki uygun session aranıyor.",
+                        selected_session_id,
+                        job_id,
+                    )
+                    add_notification(
+                        "warning",
+                        "Session hedef grup için atlandı",
+                        f"{reason} Sıradaki uygun session aranıyor.",
+                        "sessions",
                     )
                     last_session_id = selected_session_id
                     continue
@@ -2196,10 +2263,30 @@ async def execute_invite_job(job_id: int) -> None:
                     "Kullanıcı Telegram grup/kanal sınırına ulaşmış",
                     "skipped",
                 )
-            except ChatAdminRequiredError as error:
-                raise RuntimeError(
-                    f"Telegram üye ekleme işlemini durdurdu: {type(error).__name__}"
-                ) from error
+            except ChatAdminRequiredError:
+                reason = (
+                    f"Session #{current_session_id} hedef grupta üye ekleme yetkisini kaybetti"
+                )
+                target_unavailable_session_ids.add(current_session_id)
+                pending_handoff_from_session_id = current_session_id
+                pending_handoff_reason = reason
+                last_unavailable_error = reason
+                add_log(
+                    "warning",
+                    "invite_target_access",
+                    f"{reason}; aday korunarak sıradaki uygun session aranıyor.",
+                    current_session_id,
+                    job_id,
+                )
+                add_notification(
+                    "warning",
+                    "Session hedef grup için atlandı",
+                    f"{reason}; aday korunarak sıradaki uygun session aranıyor.",
+                    "sessions",
+                )
+                await _close_invite_session(context)
+                context = None
+                continue
             except Exception as error:  # noqa: BLE001 - isolate one candidate and continue
                 error_detail = str(error).strip()
                 reason = f"Üye ekleme başarısız: {type(error).__name__}"

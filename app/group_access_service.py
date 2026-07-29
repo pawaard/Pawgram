@@ -19,6 +19,7 @@ from app.telegram_service import (
     GroupJoinPending,
     ProxyUnavailableError,
     _client_for,
+    _entity_can_invite_users,
     _private_invite_hash,
     _resolve_entity,
     _resolve_or_request_group_access,
@@ -71,14 +72,6 @@ async def _session_already_has_access(client, reference: str) -> bool:
         return True
     except UserNotParticipantError:
         return False
-
-
-def _invite_permission(entity) -> bool:
-    rights = getattr(entity, "admin_rights", None)
-    return bool(
-        getattr(entity, "creator", False)
-        or (rights and getattr(rights, "invite_users", False))
-    )
 
 
 def _finish_item(
@@ -244,7 +237,11 @@ async def execute_group_access_batch(batch_id: int) -> None:
                     entity = await _resolve_entity(client, batch["group_ref"])
                     already_member = True
 
-                can_invite = _invite_permission(entity) if batch["purpose"] == "target" else None
+                can_invite = (
+                    _entity_can_invite_users(entity)
+                    if batch["purpose"] == "target"
+                    else None
+                )
                 status = "already_member" if already_member else "joined"
                 reason = "Session zaten grubun üyesi."
                 if not already_member:
@@ -253,7 +250,10 @@ async def execute_group_access_batch(batch_id: int) -> None:
                     permission_text = (
                         "Hedef grupta üye ekleme yetkisi var."
                         if can_invite
-                        else "Hedef grupta üye ekleme yetkisi yok; hesabı yetkili yönetici yapın."
+                        else (
+                            "Hedef grupta üye ekleme yetkisi yok; genel 'Üye ekle' "
+                            "iznini açın veya hesabı yetkili yönetici yapın."
+                        )
                     )
                     reason = f"{reason} {permission_text}"
                 _finish_item(

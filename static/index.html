@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=0.4.3">
+  <link rel="stylesheet" href="/static/features.css?v=0.4.4">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -455,7 +455,7 @@
       <div class="form-grid">
         <label class="span-2">İş adı<input id="job-name" placeholder="Topluluk aktarım önizlemesi"></label>
         <label>Telegram hesabı<select id="job-session"></select></label>
-        <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" max="1000" value="100"></label>
+        <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" value="100"></label>
         <label>Çekilecek grup<input id="job-source" placeholder="-100... veya @kaynak"></label>
         <label>Gönderilecek grup<input id="job-target" placeholder="-100... veya @hedef"></label>
         <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="20"></label>
@@ -468,7 +468,7 @@
       </div>
       <div class="notice">Seçilen adaylar Telegram'ın resmi “Gruba katılımcı ekle” işlemiyle doğrudan hedef gruba eklenir; özel mesaj veya davet bağlantısı gönderilmez.</div>
       <button class="primary full" id="create-job">Doğrula ve kuyruğa ekle</button>
-      <div class="notice invite-note">Üye ekleme yalnızca panelde seçilip onaylanan adaylar için çalışır. Aynı session en fazla 3 başarılı eklemeden sonra 30 dakika bekler; proxy veya Telegram kısıtı varsa başka hesaba otomatik geçilmez.</div>
+      <div class="notice invite-note">Üye ekleme yalnızca panelde seçilip onaylanan adaylar için çalışır. Session parti sınırına, günlük kotaya, proxy hatasına veya Telegram beklemesine girerse iş sıradaki uygun sessionla otomatik devam eder.</div>
       <div id="job-message" class="form-message hidden"></div>
     </div>
   </div>
@@ -511,7 +511,7 @@
         <label class="span-2">Hedef grup @kullanıcı adı veya ID
           <input id="activity-transfer-target" placeholder="@hedefgrup veya -100..."></label>
         <label>Hazırlanacak kullanıcı sayısı
-          <input id="activity-transfer-max" type="number" min="1" max="1000" value="100"></label>
+          <input id="activity-transfer-max" type="number" min="1" value="100"></label>
         <label>Günlük üye ekleme sınırı
           <input id="activity-transfer-daily" type="number" min="1" max="1000" value="50"></label>
         <label>Minimum bekleme (sn)
@@ -583,6 +583,6 @@
   <div id="runtime-overlay" class="runtime-overlay hidden">
     <div><span class="runtime-spinner" aria-hidden="true"></span><h2 id="runtime-overlay-title">Pawgram kapatılıyor</h2><p id="runtime-overlay-message">Bu tarayıcı sekmesini kapatabilirsiniz.</p></div>
   </div>
-  <script src="/static/app.js?v=0.4.3"></script>
+  <script src="/static/app.js?v=0.4.4"></script>
 </body>
 </html>

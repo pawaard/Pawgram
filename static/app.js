@@ -1153,7 +1153,7 @@ async function openActivityResults(scanId) {
       </tbody></table>` : emptyTable("Sonuç bulunamadı", "Seçilen zaman aralığında mesaj atan uygun kullanıcı yok.");
     $("#open-activity-transfer").disabled = !data.items.length || !["completed", "scheduled"].includes(scan.status);
     $("#activity-transfer-source").textContent = `${scan.group_title || scan.group_ref} grubunda ${scan.unique_users || 0} aktif kullanıcı bulundu.`;
-    $("#activity-transfer-max").value = Math.min(Math.max(Number(scan.unique_users) || 100, 1), 1000);
+    $("#activity-transfer-max").value = Math.max(Number(scan.unique_users) || 100, 1);
     openModal("#activity-results-modal");
   } catch (error) { toast(error.message); }
 }
@@ -1201,7 +1201,19 @@ async function prepareActivityTransfer() {
   }
 }
 
-function openModal(selector) { $(selector).classList.remove("hidden"); }
+function syncModalPageState() {
+  const hasOpenModal = $$(".modal-backdrop").some(item => !item.classList.contains("hidden"));
+  document.body.classList.toggle("modal-open", hasOpenModal);
+}
+
+function openModal(selector) {
+  const backdrop = $(selector);
+  backdrop.classList.remove("hidden");
+  backdrop.scrollTop = 0;
+  const modal = backdrop.querySelector(".modal");
+  if (modal) modal.scrollTop = 0;
+  syncModalPageState();
+}
 
 function resetLoginFlowState() {
   state.loginPhone = "";
@@ -1231,6 +1243,23 @@ function closeModals({ keepLoginState = false } = {}) {
   }
   if (!keepLoginState) resetLoginFlowState();
   $$(".modal-backdrop").forEach(item => item.classList.add("hidden"));
+  syncModalPageState();
+}
+
+function closeModal(backdrop, { keepLoginState = false } = {}) {
+  if (!backdrop) return;
+  if (backdrop.id === "session-modal") {
+    const pendingPhone = state.loginPhone;
+    if (!keepLoginState && pendingPhone) {
+      runUi(api("/api/sessions/login/pending", {
+        method:"DELETE",
+        body:JSON.stringify({phone:pendingPhone}),
+      }), {silent:true});
+    }
+    if (!keepLoginState) resetLoginFlowState();
+  }
+  backdrop.classList.add("hidden");
+  syncModalPageState();
 }
 
 async function openSessionModalFresh() {
@@ -2226,8 +2255,9 @@ $$('[data-open-job]').forEach(button => button.addEventListener("click", () => {
   if (!state.sessions.length) return toast("İş oluşturmadan önce bir Telegram hesabı bağlayın.");
   openModal("#job-modal");
 }));
-$$('[data-close-modal]').forEach(button => button.addEventListener("click", closeModals));
-$$('.modal-backdrop').forEach(item => item.addEventListener("click", event => { if (event.target === item) closeModals(); }));
+$$('[data-close-modal]').forEach(button => button.addEventListener("click", event => {
+  closeModal(event.currentTarget.closest(".modal-backdrop"));
+}));
 $("#request-code").addEventListener("click", requestCode);
 $("#login-use-proxy").addEventListener("change", syncLoginProxyMode);
 $("#verify-code").addEventListener("click", verifyCode);

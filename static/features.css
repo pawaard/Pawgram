@@ -270,10 +270,12 @@ button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
 /* The browser viewport is the application window; adapt to its live dimensions. */
 html, body { min-height: 100%; }
 body { min-height: 100vh; min-height: var(--pawgram-viewport-height, 100dvh); overflow-x: hidden; }
+body.modal-open { height: var(--pawgram-viewport-height, 100dvh); overflow: hidden; }
 .app-shell, .main-content { min-height: 100vh; min-height: var(--pawgram-viewport-height, 100dvh); }
 .sidebar { height: 100vh; height: var(--pawgram-viewport-height, 100dvh); max-height: var(--pawgram-viewport-height, 100dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
-.modal-backdrop { display: flex; align-items: center; justify-content: center; overflow: auto; padding: clamp(10px, 2.5vh, 20px); }
-.modal { max-width: calc(100vw - 20px); max-height: calc(var(--pawgram-viewport-height, 100dvh) - 20px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.modal-backdrop { display: flex; align-items: center; justify-content: center; overflow: hidden; overscroll-behavior: contain; touch-action: none; padding: clamp(10px, 2.5vh, 20px); }
+.modal { min-height: 0; max-width: calc(100vw - 20px); max-height: calc(var(--pawgram-viewport-height, 100dvh) - 20px); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-gutter: stable; -webkit-overflow-scrolling: touch; }
+.modal-close { position: sticky; z-index: 5; top: 0; float: right; display: grid; place-items: center; width: 34px; height: 34px; margin: -10px -10px -34px 0; border: 1px solid #314963; border-radius: 7px; background: #101d2b; color: #d8e4f2; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
 #session-modal .modal { width: min(700px, calc(100vw - 24px)); max-height: calc(var(--pawgram-viewport-height, 100dvh) - 24px); scrollbar-color: #36506d #0b1420; scrollbar-width: thin; }
 html[data-viewport-mode="wide"] #session-modal .modal { width: min(760px, calc(100vw - 40px)); }
 #session-modal .modal::-webkit-scrollbar { width: 10px; }
@@ -291,6 +293,13 @@ html[data-viewport-mode="wide"] #session-modal .modal { width: min(760px, calc(1
   #session-modal .check-label { margin-top: 14px!important; }
   #session-modal .compliance-note { margin-top: 10px; }
   #session-modal .full { margin-top: 12px; }
+}
+
+@media (max-height: 650px) {
+  .modal-backdrop { align-items: stretch; padding: 8px; }
+  .modal { width: 100%; margin: 0 auto; max-height: calc(var(--pawgram-viewport-height, 100dvh) - 16px); }
+  .modal.extra-wide, .modal.wide { width: min(100%, calc(100vw - 16px)); }
+  .candidate-table { max-height: min(42vh, 300px); }
 }
 
 @media (max-width: 720px) {

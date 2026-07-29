@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.4.4",
+    "release_date": "2026-07-29",
+    "title": "Aktarım akışı ve modal güvenilirliği",
+    "changes": [
+      "Açık pencereler dış alana yanlışlıkla tıklanınca kapanmıyor",
+      "Kısa ve ölçeklendirilmiş ekranlarda tüm modallar kontrollü biçimde kaydırılabiliyor",
+      "Üye hazırlama sayısındaki 1000 kullanıcı üst sınırı kaldırıldı",
+      "Normal grup üyelerine verilen genel Üye ekle izni doğru algılanıyor",
+      "Session gruba hazırlama ve işlem öncesi sağlık kontrolleri aynı merkezi yetki kuralını kullanıyor",
+      "Hedef grupta yetkisi olmayan davet session'ı adayı tüketmeden atlanıyor ve iş sıradaki uygun session'la devam ediyor"
+    ]
+  },
+  {
     "version": "0.4.3",
     "release_date": "2026-07-29",
     "title": "Ekran uyumu ve uygulama kontrolleri",

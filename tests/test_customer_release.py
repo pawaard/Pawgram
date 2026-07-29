@@ -13,7 +13,11 @@ from app.release_history import (
     initialize_release_tracking,
     release_notes_overview,
 )
-from app.schemas import ActivityTransferRequest, JobCreateRequest
+from app.schemas import (
+    ActivityTransferRequest,
+    CandidateSelectionRequest,
+    JobCreateRequest,
+)
 from scripts.verify_customer_release import verify_release_folder, verify_release_zip
 
 
@@ -29,9 +33,30 @@ class CustomerReleaseTests(unittest.TestCase):
         self.assertIn("#login-step-phone { display: grid", css)
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
         self.assertIn("@media (max-height: 800px)", css)
-        self.assertIn('/static/features.css?v=0.4.3', html)
+        self.assertIn('/static/features.css?v=0.4.4', html)
+        self.assertIn('/static/app.js?v=0.4.4', html)
+        self.assertNotIn('id="activity-transfer-max" type="number" min="1" max="1000"', html)
         self.assertIn("syncViewportMetrics", javascript)
         self.assertIn('root.dataset.viewportMode', javascript)
+        self.assertIn("body.modal-open", css)
+        self.assertIn(".modal-close { position: sticky", css)
+        self.assertIn("syncModalPageState", javascript)
+        self.assertIn('closeModal(event.currentTarget.closest(".modal-backdrop"))', javascript)
+        self.assertNotIn("event.target === item) closeModals()", javascript)
+
+    def test_member_preparation_limit_is_not_capped_at_one_thousand(self):
+        activity = ActivityTransferRequest(target_ref="@target", max_users=4273)
+        job = JobCreateRequest(
+            name="Büyük aktarım",
+            session_id=1,
+            source_ref="@source",
+            target_ref="@target",
+            max_users=4273,
+        )
+        self.assertEqual(activity.max_users, 4273)
+        self.assertEqual(job.max_users, 4273)
+        selection = CandidateSelectionRequest(candidate_ids=list(range(1, 4274)))
+        self.assertEqual(len(selection.candidate_ids), 4273)
 
     def test_customer_ui_exposes_runtime_and_update_controls(self):
         static_root = Path(__file__).resolve().parent.parent / "static"
