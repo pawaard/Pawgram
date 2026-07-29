@@ -45,7 +45,7 @@ from telethon.tl.types import (
     User,
 )
 
-from app.config import get_settings
+from app.config import RESOURCE_DIR, get_settings
 from app.database import (
     add_log,
     add_notification,
@@ -66,6 +66,7 @@ DEFAULT_DAILY_ACTIVITY_QUOTA = 30
 PENDING_AUTH_TTL_MINUTES = 15
 DEFAULT_LOGIN_PROXY_SETTING = "default_login_proxy_encrypted"
 DEFAULT_LOGIN_PROXY_REVISION_SETTING = "default_login_proxy_revision"
+CUSTOMER_PROXY_BUNDLE_FILENAME = "customer-proxy.json"
 
 
 class GroupJoinPending(RuntimeError):
@@ -185,23 +186,51 @@ def _save_default_login_proxy(config: dict) -> None:
     set_app_setting(DEFAULT_LOGIN_PROXY_SETTING, encrypt(json.dumps(value)))
 
 
+def _load_bundled_customer_proxy() -> dict | None:
+    bundle_path = RESOURCE_DIR / CUSTOMER_PROXY_BUNDLE_FILENAME
+    if not bundle_path.is_file():
+        return None
+    try:
+        bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("Paketlenmiş müşteri proxy yapılandırması okunamadı.") from error
+    required = {"revision", "proxy_type", "host", "port"}
+    if not isinstance(bundle, dict) or not required.issubset(bundle):
+        raise RuntimeError("Paketlenmiş müşteri proxy yapılandırması eksik veya bozuk.")
+    return bundle
+
+
 def sync_customer_release_proxy() -> int:
     """Apply a private package proxy revision without replacing Telegram session data."""
     settings = get_settings()
-    revision = (settings.default_proxy_revision or "").strip()
-    if not settings.customer_release or not revision:
-        return 0
+    bundle = _load_bundled_customer_proxy()
+    if bundle:
+        revision = str(bundle["revision"]).strip()
+        proxy_type = str(bundle["proxy_type"])
+        proxy_host = str(bundle["host"])
+        proxy_port = int(bundle["port"])
+        proxy_username = bundle.get("username")
+        proxy_password = bundle.get("password")
+    else:
+        revision = (settings.default_proxy_revision or "").strip()
+        if not settings.customer_release or not revision:
+            return 0
+        proxy_type = settings.default_proxy_type
+        proxy_host = settings.default_proxy_host or ""
+        proxy_port = int(settings.default_proxy_port or 0)
+        proxy_username = settings.default_proxy_username
+        proxy_password = settings.default_proxy_password
     if get_app_setting(DEFAULT_LOGIN_PROXY_REVISION_SETTING) == revision:
         return 0
-    if not settings.default_proxy_host or not settings.default_proxy_port:
+    if not revision or not proxy_host or not proxy_port:
         raise RuntimeError("Müşteri proxy revizyonunda host ve port zorunludur.")
 
     config = _proxy_config_from_values(
-        settings.default_proxy_type,
-        settings.default_proxy_host,
-        settings.default_proxy_port,
-        settings.default_proxy_username,
-        settings.default_proxy_password,
+        proxy_type,
+        proxy_host,
+        proxy_port,
+        proxy_username,
+        proxy_password,
     )
     _save_default_login_proxy(config)
     now = utc_now()

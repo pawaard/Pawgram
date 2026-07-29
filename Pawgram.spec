@@ -1,11 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+
+
+datas = [('static', 'static'), ('VERSION', '.'), ('RELEASE_NOTES.json', '.')]
+proxy_bundle = Path('customer-proxy.json')
+if proxy_bundle.is_file():
+    datas.append((str(proxy_bundle), '.'))
+
 
 a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[],
-    datas=[('static', 'static'), ('VERSION', '.'), ('RELEASE_NOTES.json', '.')],
+    datas=datas,
     hiddenimports=['uvicorn.logging', 'uvicorn.loops.auto', 'uvicorn.protocols.http.auto', 'uvicorn.protocols.websockets.auto', 'uvicorn.lifespan.on', 'python_socks.async_.asyncio'],
     hookspath=[],
     hooksconfig={},

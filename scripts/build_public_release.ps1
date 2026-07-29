@@ -1,6 +1,7 @@
 param(
     [string]$PythonPath = "",
-    [string]$SigningKeyPath = ""
+    [string]$SigningKeyPath = "",
+    [string]$DatabasePath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,12 @@ if (-not $SigningKeyPath) {
 }
 if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Uyumlu Python bulunamadı." }
 if (-not (Test-Path -LiteralPath $SigningKeyPath)) { throw "Güncelleme imzalama anahtarı bulunamadı." }
+if ($DatabasePath) {
+    $DatabasePath = [IO.Path]::GetFullPath($DatabasePath)
+    if (-not (Test-Path -LiteralPath $DatabasePath -PathType Leaf)) {
+        throw "Paketlenecek müşteri proxy ayarının veritabanı bulunamadı."
+    }
+}
 
 $version = (Get-Content -LiteralPath (Join-Path $projectRoot "VERSION") -Raw).Trim()
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
@@ -39,6 +46,12 @@ try {
     & git -C $projectRoot archive --format=zip --output=$sourceArchive HEAD
     if ($LASTEXITCODE -ne 0) { throw "Kaynak arşivi oluşturulamadı." }
     Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceRoot
+    if ($DatabasePath) {
+        & $PythonPath (Join-Path $sourceRoot "scripts\export_proxy_bundle.py") `
+            --database $DatabasePath `
+            --output (Join-Path $sourceRoot "customer-proxy.json")
+        if ($LASTEXITCODE -ne 0) { throw "Müşteri proxy güncelleme paketi üretilemedi." }
+    }
     & $PythonPath -m pip install --disable-pip-version-check --target $buildPackages `
         -r (Join-Path $sourceRoot "requirements.txt") `
         -r (Join-Path $sourceRoot "requirements-build.txt")

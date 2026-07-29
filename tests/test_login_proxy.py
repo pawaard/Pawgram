@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -204,6 +205,47 @@ class LoginProxyTests(unittest.TestCase):
             get_app_setting("default_login_proxy_revision"),
             "proxy-revision-2",
         )
+
+    def test_bundled_proxy_revision_updates_existing_customer_sessions(self):
+        from app.database import get_connection, utc_now
+        from app.security import decrypt
+        from app.telegram_service import sync_customer_release_proxy
+
+        now = utc_now()
+        with get_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO telegram_sessions(
+                    label, phone_masked, phone_encrypted, session_encrypted,
+                    status, proxy_enabled, proxy_type, proxy_host, proxy_port,
+                    created_at, updated_at
+                ) VALUES (
+                    'Existing', '+90 ***', 'phone', 'session', 'active',
+                    1, 'http', 'old.proxy', 10000, ?, ?
+                )
+                """,
+                (now, now),
+            )
+
+        bundle = {
+            "revision": "github-proxy-revision",
+            "proxy_type": "http",
+            "host": "release.proxy",
+            "port": 10003,
+            "username": "release-user",
+            "password": "release-pass",
+        }
+        bundle_path = Path(self.temp_dir.name) / "customer-proxy.json"
+        bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+        with patch("app.telegram_service.RESOURCE_DIR", bundle_path.parent):
+            self.assertEqual(sync_customer_release_proxy(), 1)
+
+        with get_connection() as connection:
+            session = connection.execute("SELECT * FROM telegram_sessions").fetchone()
+        self.assertEqual(session["proxy_host"], "release.proxy")
+        self.assertEqual(session["proxy_port"], 10003)
+        self.assertEqual(session["status"], "proxy_pending")
+        self.assertEqual(decrypt(session["proxy_password_encrypted"]), "release-pass")
 
     def test_real_telegram_probe_falls_back_to_http(self):
         from app.telegram_service import _connect_telegram_through_proxy

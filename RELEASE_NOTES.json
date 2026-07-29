@@ -1,5 +1,16 @@
 [
   {
+    "version": "0.4.6",
+    "release_date": "2026-07-30",
+    "title": "Otomatik proxy dağıtımı",
+    "changes": [
+      "Yeni proxy revizyonu GitHub güncelleme paketinden otomatik uygulanıyor",
+      "Müşterinin ayrıca ZIP indirmesine veya proxy bilgisi girmesine gerek kalmıyor",
+      "Telefonlar, Telegram session verileri, görevler ve kullanıcı ayarları korunuyor",
+      "Güncelleme sonrasında session proxy bağlantıları yeniden doğrulanıyor"
+    ]
+  },
+  {
     "version": "0.4.5",
     "release_date": "2026-07-30",
     "title": "Proxy ve aktivite taraması güvenilirliği",
