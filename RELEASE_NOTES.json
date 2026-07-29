@@ -1,5 +1,15 @@
 [
   {
+    "version": "0.4.2",
+    "release_date": "2026-07-29",
+    "title": "Otomatik güncelleme kurulumu düzeltildi",
+    "changes": [
+      "Windows dosya kilitlerinde güvenli bekleme ve yeniden deneme",
+      "Başarısız kurulumlarda eksik veya taşınmamış dosyaları silmeyen güvenli geri alma",
+      "Güncelleme kurulum adımlarını açıklayan ayrıntılı kayıtlar"
+    ]
+  },
+  {
     "version": "0.4.1",
     "release_date": "2026-07-29",
     "title": "Kısa ekran form düzeltmesi",

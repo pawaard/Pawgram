@@ -126,3 +126,16 @@ class UpdaterTests(unittest.TestCase):
         self.assertNotIn('$targets = @("Pawgram.exe", "_internal", ".env")', script)
         self.assertNotIn('$targets = @("Pawgram.exe", "_internal", "data")', script)
         self.assertIn("data klasörü korundu", script)
+
+    def test_installer_waits_and_retries_locked_runtime_files(self):
+        script = _updater_script()
+        self.assertIn("function Wait-ForProcessExit", script)
+        self.assertIn("function Invoke-FileOperationWithRetry", script)
+        self.assertIn("Eski Pawgram işlemi kapandı", script)
+        self.assertIn("Move-Item -LiteralPath $current -Destination $saved -ErrorAction Stop", script)
+        self.assertNotIn("Wait-Process -Id $RunningProcessId", script)
+
+    def test_installer_only_rolls_back_targets_that_were_moved(self):
+        script = _updater_script()
+        self.assertIn("$movedTargets.Add($name)", script)
+        self.assertIn("foreach ($name in $movedTargets)", script)

@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(0, 4, 1, 0),
-    prodvers=(0, 4, 1, 0),
+    filevers=(0, 4, 2, 0),
+    prodvers=(0, 4, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,12 +16,12 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'Paward'),
           StringStruct(u'FileDescription', u'Pawgram Telegram Yönetim Uygulaması'),
-          StringStruct(u'FileVersion', u'0.4.1'),
+          StringStruct(u'FileVersion', u'0.4.2'),
           StringStruct(u'InternalName', u'Pawgram'),
           StringStruct(u'LegalCopyright', u'Copyright © 2026 Paward'),
           StringStruct(u'OriginalFilename', u'Pawgram.exe'),
           StringStruct(u'ProductName', u'Pawgram'),
-          StringStruct(u'ProductVersion', u'0.4.1')
+          StringStruct(u'ProductVersion', u'0.4.2')
         ]
       )
     ]),

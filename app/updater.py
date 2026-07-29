@@ -211,22 +211,61 @@ New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 function Write-UpdateLog([string]$Message) {
     Add-Content -LiteralPath $log -Encoding UTF8 -Value ("[" + (Get-Date -Format "yyyy-MM-ddTHH:mm:ss") + "] " + $Message)
 }
+function Wait-ForProcessExit([int]$ProcessId, [int]$TimeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ($null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)) {
+        if ((Get-Date) -ge $deadline) {
+            throw "Pawgram işlemi $TimeoutSeconds saniye içinde kapanmadı (PID: $ProcessId)."
+        }
+        Start-Sleep -Milliseconds 250
+    }
+}
+function Invoke-FileOperationWithRetry(
+    [scriptblock]$Operation,
+    [string]$Description,
+    [int]$TimeoutSeconds = 90
+) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ($true) {
+        try {
+            & $Operation
+            return
+        } catch {
+            if ((Get-Date) -ge $deadline) {
+                throw ($Description + " başarısız: " + $_.Exception.Message)
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
+}
 if (-not (Test-Path -LiteralPath (Join-Path $staged "Pawgram.exe"))) { throw "Staged Pawgram.exe missing" }
 if (-not (Test-Path -LiteralPath (Join-Path $staged "_internal"))) { throw "Staged _internal missing" }
-try { Wait-Process -Id $RunningProcessId -Timeout 90 -ErrorAction SilentlyContinue } catch { }
+Wait-ForProcessExit -ProcessId $RunningProcessId -TimeoutSeconds 90
+Write-UpdateLog ("Eski Pawgram işlemi kapandı; dosya değişimi başlıyor (PID: " + $RunningProcessId + ").")
 $backup = Join-Path $install (".pawgram-update-backup-" + [Guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $backup -Force | Out-Null
 $targets = @("Pawgram.exe", "_internal")
+$movedTargets = New-Object System.Collections.Generic.List[string]
 $newProcess = $null
 $updateRoot = Split-Path -Parent (Split-Path -Parent $staged)
 $healthFile = Join-Path $updateRoot "startup-health.json"
 try {
     foreach ($name in $targets) {
         $current = Join-Path $install $name
-        if (Test-Path -LiteralPath $current) { Move-Item -LiteralPath $current -Destination (Join-Path $backup $name) }
+        $saved = Join-Path $backup $name
+        if (Test-Path -LiteralPath $current) {
+            Invoke-FileOperationWithRetry -Description ("Mevcut " + $name + " yedeklenemedi") -Operation {
+                Move-Item -LiteralPath $current -Destination $saved -ErrorAction Stop
+            }
+            $movedTargets.Add($name)
+        }
     }
-    Copy-Item -LiteralPath (Join-Path $staged "Pawgram.exe") -Destination $exe -Force
-    Copy-Item -LiteralPath (Join-Path $staged "_internal") -Destination (Join-Path $install "_internal") -Recurse -Force
+    Invoke-FileOperationWithRetry -Description "Yeni Pawgram.exe kopyalanamadı" -Operation {
+        Copy-Item -LiteralPath (Join-Path $staged "Pawgram.exe") -Destination $exe -Force -ErrorAction Stop
+    }
+    Invoke-FileOperationWithRetry -Description "Yeni _internal klasörü kopyalanamadı" -Operation {
+        Copy-Item -LiteralPath (Join-Path $staged "_internal") -Destination (Join-Path $install "_internal") -Recurse -Force -ErrorAction Stop
+    }
     if (Test-Path -LiteralPath $healthFile) { Remove-Item -LiteralPath $healthFile -Force }
     $env:PAWGRAM_UPDATE_HEALTH_FILE = $healthFile
     try {
@@ -259,14 +298,22 @@ try {
         $newProcess.Refresh()
         if (-not $newProcess.HasExited) {
             Stop-Process -Id $newProcess.Id -Force -ErrorAction SilentlyContinue
-            try { Wait-Process -Id $newProcess.Id -Timeout 10 -ErrorAction SilentlyContinue } catch { }
+            try { Wait-ForProcessExit -ProcessId $newProcess.Id -TimeoutSeconds 10 } catch { }
         }
     }
-    foreach ($name in $targets) {
+    foreach ($name in $movedTargets) {
         $current = Join-Path $install $name
         $saved = Join-Path $backup $name
-        if (Test-Path -LiteralPath $current) { Remove-Item -LiteralPath $current -Recurse -Force }
-        if (Test-Path -LiteralPath $saved) { Move-Item -LiteralPath $saved -Destination $current }
+        if (Test-Path -LiteralPath $saved) {
+            if (Test-Path -LiteralPath $current) {
+                Invoke-FileOperationWithRetry -Description ("Başarısız " + $name + " kaldırılamadı") -Operation {
+                    Remove-Item -LiteralPath $current -Recurse -Force -ErrorAction Stop
+                }
+            }
+            Invoke-FileOperationWithRetry -Description ("Yedek " + $name + " geri yüklenemedi") -Operation {
+                Move-Item -LiteralPath $saved -Destination $current -ErrorAction Stop
+            }
+        }
     }
     if (Test-Path -LiteralPath $exe) { Start-Process -FilePath $exe -WorkingDirectory $install }
     exit 1
