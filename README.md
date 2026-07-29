@@ -131,8 +131,8 @@ Aşağıdaki doğrulama başarılı kurulum/restart ve bozuk paket rollback yoll
 
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\verify_update_simulation.py `
-  --customer-zip .\releases\Pawgram-Customer-0.4.0-win64.zip `
-  --update-zip .\releases\Pawgram-0.4.0-win64.zip
+  --customer-zip .\releases\Pawgram-Customer-0.4.1-win64.zip `
+  --update-zip .\releases\Pawgram-0.4.1-win64.zip
 ```
 
 ## Kaynak kodla geliştirme

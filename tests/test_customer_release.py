@@ -18,6 +18,14 @@ from scripts.verify_customer_release import verify_release_folder, verify_releas
 
 
 class CustomerReleaseTests(unittest.TestCase):
+    def test_session_login_modal_scrolls_on_short_screens(self):
+        css = (Path(__file__).resolve().parent.parent / "static" / "features.css").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("#session-modal .modal", css)
+        self.assertIn("max-height: calc(100dvh - 40px)", css)
+        self.assertIn("overflow-y: auto", css)
+
     def test_customer_ui_describes_current_invite_rotation(self):
         html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text(
             encoding="utf-8"

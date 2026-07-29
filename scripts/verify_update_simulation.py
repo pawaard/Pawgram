@@ -334,7 +334,7 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path) -> dict:
         }
         if evidence != {
             "snapshot_preserved": True,
-            "installed_version": "0.4.0",
+            "installed_version": "0.4.1",
             "health_marker": True,
             "live_health": True,
             "backup_count": 0,
@@ -352,7 +352,7 @@ def simulate_rollback(customer_zip: Path, root: Path) -> dict:
     customer_root = extract_release(customer_zip, root / "customer-rollback")
     install = root / "install-rollback"
     shutil.copytree(customer_root, install)
-    seed_customer_data(install, "0.4.0")
+    seed_customer_data(install, "0.4.1")
     before = customer_snapshot(install)
     executable_before = sha256(install / "Pawgram.exe")
     staged = root / "update-rollback" / "extracted" / "Pawgram"
@@ -387,7 +387,7 @@ def simulate_rollback(customer_zip: Path, root: Path) -> dict:
         if evidence != {
             "snapshot_preserved": True,
             "executable_restored": True,
-            "restored_version": "0.4.0",
+            "restored_version": "0.4.1",
             "rollback_logged": True,
             "old_version_restarted": True,
             "live_health": True,

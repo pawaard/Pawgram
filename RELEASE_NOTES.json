@@ -1,5 +1,14 @@
 [
   {
+    "version": "0.4.1",
+    "release_date": "2026-07-29",
+    "title": "Kısa ekran form düzeltmesi",
+    "changes": [
+      "Telegram hesabı ekleme formuna küçük ekranlar için dikey kaydırma desteği eklendi",
+      "Formun altındaki doğrulama düğmesine her ekran yüksekliğinde erişim sağlandı"
+    ]
+  },
+  {
     "version": "0.4.0",
     "release_date": "2026-07-29",
     "title": "Müşteri sürümü",

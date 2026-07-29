@@ -70,6 +70,7 @@ button:disabled{opacity:.5;cursor:not-allowed;filter:none!important}
 .group-filter-empty { padding: 18px; color: var(--muted); text-align: center; }
 .badge.megagroup { color: var(--blue); border-color: #155c82; background: #0b2536; }
 .group-detail-modal { max-height: min(88vh, 820px); overflow: auto; }
+#session-modal .modal { max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .group-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-right: 26px; }
 .group-detail-heading p { margin-bottom: 12px!important; }
 .group-detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
