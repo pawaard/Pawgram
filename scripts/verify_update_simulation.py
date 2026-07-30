@@ -153,7 +153,6 @@ def customer_snapshot(install: Path) -> dict:
                 WHERE key IN (
                     'heartbeat_enabled', 'heartbeat_interval_minutes',
                     'heartbeat_group_id', 'heartbeat_message_template',
-                    'license_lease_token', 'license_customer_label',
                     'local_preference_theme'
                 )
                 ORDER BY key

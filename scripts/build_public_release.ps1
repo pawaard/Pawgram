@@ -52,6 +52,18 @@ try {
     & git -C $projectRoot archive --format=zip --output=$sourceArchive HEAD
     if ($LASTEXITCODE -ne 0) { throw "Kaynak arşivi oluşturulamadı." }
     Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceRoot
+
+    # GitHub güncelleme paketi müşteride mevcut ticari EXE'nin yerine geçer.
+    # Bu nedenle güncelleme EXE'si de lisansı kaynak içine gömülü biçimde
+    # zorunlu tutmalıdır; .env içindeki LICENSE_REQUIRED=false bunu kapatamaz.
+    $editionPath = Join-Path $sourceRoot "app\edition.py"
+    $editionSource = Get-Content -LiteralPath $editionPath -Raw -Encoding UTF8
+    $editionSource = $editionSource -replace "COMMERCIAL_EDITION = False", "COMMERCIAL_EDITION = True"
+    if ($editionSource -notmatch "COMMERCIAL_EDITION = True") {
+        throw "Güncelleme paketi ticari lisans zorunluluğuyla hazırlanamadı."
+    }
+    Set-Content -LiteralPath $editionPath -Value $editionSource -Encoding UTF8
+
     & $PythonPath -m pip install --disable-pip-version-check --target $buildPackages `
         -r (Join-Path $sourceRoot "requirements.txt") `
         -r (Join-Path $sourceRoot "requirements-build.txt")

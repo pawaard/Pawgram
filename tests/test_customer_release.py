@@ -33,8 +33,8 @@ class CustomerReleaseTests(unittest.TestCase):
         self.assertIn("#login-step-phone { display: grid", css)
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
         self.assertIn("@media (max-height: 800px)", css)
-        self.assertIn('/static/features.css?v=0.4.7', html)
-        self.assertIn('/static/app.js?v=0.4.7', html)
+        self.assertIn('/static/features.css?v=0.4.8', html)
+        self.assertIn('/static/app.js?v=0.4.8', html)
         self.assertNotIn('id="activity-transfer-max" type="number" min="1" max="1000"', html)
         self.assertIn("syncViewportMetrics", javascript)
         self.assertIn('root.dataset.viewportMode', javascript)
@@ -62,10 +62,35 @@ class CustomerReleaseTests(unittest.TestCase):
         static_root = Path(__file__).resolve().parent.parent / "static"
         html = (static_root / "index.html").read_text(encoding="utf-8")
         javascript = (static_root / "app.js").read_text(encoding="utf-8")
-        for element_id in ("shutdown-app", "install-settings-update", "runtime-overlay"):
+        for element_id in (
+            "shutdown-app",
+            "license-shutdown",
+            "install-settings-update",
+            "runtime-overlay",
+        ):
             self.assertIn(f'id="{element_id}"', html)
         self.assertIn("installSettingsUpdate", javascript)
         self.assertIn("shutdownApplication", javascript)
+        self.assertIn('startup.log', (static_root.parent / "run.py").read_text(encoding="utf-8"))
+        self.assertLess(
+            javascript.index('api("/api/license/status")'),
+            javascript.index('api("/api/auth/status")'),
+        )
+
+    def test_public_update_build_keeps_commercial_licensing_enabled(self):
+        root = Path(__file__).resolve().parent.parent
+        build_script = (root / "scripts" / "build_public_release.ps1").read_text(
+            encoding="utf-8"
+        )
+        env_export = (root / "scripts" / "export_customer_env.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            '$editionSource -replace "COMMERCIAL_EDITION = False", "COMMERCIAL_EDITION = True"',
+            build_script,
+        )
+        self.assertIn('"LICENSE_REQUIRED=true"', env_export)
+        self.assertIn('"LICENSE_SERVER_URL=https://license.rewmarket.com"', env_export)
 
     def test_customer_ui_describes_current_invite_rotation(self):
         html = (Path(__file__).resolve().parent.parent / "static" / "index.html").read_text(

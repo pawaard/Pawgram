@@ -48,6 +48,11 @@
   letter-spacing: 1px;
 }
 
+.license-close-button {
+  width: 100%;
+  margin-top: 10px;
+}
+
 @media (max-width: 720px) {
   .license-status-grid {
     grid-template-columns: 1fr;

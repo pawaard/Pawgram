@@ -1614,13 +1614,13 @@ async function installSettingsUpdate() {
 }
 
 async function shutdownApplication() {
-  const button = $("#shutdown-app");
-  button.disabled = true;
+  const buttons = [$("#shutdown-app"), $("#license-shutdown")].filter(Boolean);
+  buttons.forEach(button => { button.disabled = true; });
   try {
     const result = await api("/api/system/shutdown", {method:"POST"});
     showRuntimeOverlay("Pawgram kapatılıyor", `${result.message} Bu tarayıcı sekmesini kapatabilirsiniz.`);
   } catch (error) {
-    button.disabled = false;
+    buttons.forEach(button => { button.disabled = false; });
     toast(error.message);
   }
 }
@@ -2312,6 +2312,7 @@ $("#refresh-settings-overview").addEventListener("click", () => runUi(loadSettin
 $("#check-settings-update").addEventListener("click", () => runUi(checkSettingsUpdate()));
 $("#install-settings-update").addEventListener("click", () => runUi(installSettingsUpdate()));
 $("#shutdown-app").addEventListener("click", () => runUi(shutdownApplication()));
+$("#license-shutdown").addEventListener("click", () => runUi(shutdownApplication()));
 $("#acknowledge-release-notes").addEventListener("click", () => runUi(acknowledgeReleaseNotes()));
 $("#download-diagnostics").addEventListener("click", () => {
   $("#diagnostics-status").textContent = "Maskelenmiş tanılama raporu hazırlanıyor…";

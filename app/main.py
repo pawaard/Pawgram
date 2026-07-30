@@ -281,6 +281,13 @@ async def lifespan(_: FastAPI):
     initialize_database()
     sync_customer_release_proxy()
     initialize_release_tracking(APP_VERSION)
+    startup_license = await refresh_license()
+    if startup_license.get("required") and not startup_license.get("valid"):
+        add_log(
+            "warning",
+            "license",
+            f"Pawgram başlangıçta lisans nedeniyle kilitlendi: {startup_license.get('message')}",
+        )
     stale_session_locks = clear_stale_session_operations()
     with get_connection() as connection:
         interrupted_jobs = connection.execute(
@@ -435,6 +442,7 @@ PUBLIC_API_PATHS = {
     "/api/auth/login",
     "/api/license/status",
     "/api/license/activate",
+    "/api/system/shutdown",
 }
 
 

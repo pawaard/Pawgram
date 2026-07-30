@@ -16,6 +16,28 @@ from app.config import APP_DIR, SOURCE_DIR, get_settings
 from app.database import add_log, get_app_setting, set_app_setting
 from app.license_key import LICENSE_PUBLIC_KEY_PEM
 
+LICENSE_RUNTIME_BLOCK_STATUS = "license_runtime_block_status"
+LICENSE_RUNTIME_BLOCK_MESSAGE = "license_runtime_block_message"
+
+
+def _clear_runtime_block() -> None:
+    set_app_setting(LICENSE_RUNTIME_BLOCK_STATUS, "")
+    set_app_setting(LICENSE_RUNTIME_BLOCK_MESSAGE, "")
+
+
+def _set_runtime_block(status: str, message: str) -> None:
+    set_app_setting(LICENSE_RUNTIME_BLOCK_STATUS, status)
+    set_app_setting(LICENSE_RUNTIME_BLOCK_MESSAGE, message)
+
+
+def _server_error_message(payload: object, fallback: str) -> str:
+    if not isinstance(payload, dict):
+        return fallback
+    detail = payload.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+    return fallback
+
 
 def _decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + ("=" * (-len(value) % 4)))
@@ -87,6 +109,15 @@ def local_license_status() -> dict:
             "status": "personal",
             "message": "Kişisel kullanım modu",
         }
+    runtime_block = get_app_setting(LICENSE_RUNTIME_BLOCK_STATUS)
+    if settings.licensing_online_required and runtime_block:
+        return {
+            "required": True,
+            "valid": False,
+            "status": runtime_block,
+            "message": get_app_setting(LICENSE_RUNTIME_BLOCK_MESSAGE)
+            or "Lisans çevrim içi olarak doğrulanamadı.",
+        }
     token = get_app_setting("license_lease_token")
     if not token:
         return {
@@ -154,7 +185,7 @@ def _safe_public_status(status: dict) -> dict:
 
 
 def _server_url() -> str:
-    url = get_settings().license_server_url.rstrip("/")
+    url = get_settings().effective_license_server_url.rstrip("/")
     if not url.startswith("https://") and not url.startswith("http://127.0.0.1") and not url.startswith("http://localhost"):
         raise RuntimeError("Ticari lisans sunucusu HTTPS kullanmalıdır.")
     return url
@@ -175,13 +206,18 @@ async def activate_license(license_key: str) -> dict:
             response = await client.post(f"{_server_url()}/v1/activate", json=payload)
         data = response.json()
         if response.status_code >= 400:
-            raise ValueError(data.get("detail", "Lisans etkinleştirilemedi."))
+            raise ValueError(_server_error_message(data, "Lisans etkinleştirilemedi."))
+        if not isinstance(data, dict):
+            raise ValueError(  # noqa: TRY004 - remote response value is invalid
+                "Lisans sunucusu geçersiz yanıt verdi."
+            )
         claims = _verify_lease(data["lease_token"])
         if int(claims["exp"]) <= int(time.time()):
             raise ValueError("Sunucu süresi dolmuş lisans belgesi gönderdi.")
         set_app_setting("license_lease_token", data["lease_token"])
         set_app_setting("license_customer_label", data.get("customer_label", ""))
         set_app_setting("license_last_server_time", data["server_time"])
+        _clear_runtime_block()
         add_log("success", "license", "Pawgram lisansı bu cihazda etkinleştirildi")
         status = local_license_status()
         status["offline"] = False
@@ -208,22 +244,42 @@ async def refresh_license() -> dict:
             )
         data = response.json()
         if response.status_code >= 400:
+            message = _server_error_message(data, "Lisans sunucu tarafından reddedildi.")
             set_app_setting("license_lease_token", "")
+            _set_runtime_block("revoked", message)
             return {
                 "required": True,
                 "valid": False,
                 "status": "revoked",
-                "message": data.get("detail", "Lisans sunucu tarafından reddedildi."),
+                "message": message,
                 "offline": False,
             }
+        if not isinstance(data, dict):
+            raise ValueError(  # noqa: TRY004 - remote response value is invalid
+                "Lisans sunucusu geçersiz yanıt verdi."
+            )
         _verify_lease(data["lease_token"])
         set_app_setting("license_lease_token", data["lease_token"])
         set_app_setting("license_customer_label", data.get("customer_label", ""))
         set_app_setting("license_last_server_time", data["server_time"])
+        _clear_runtime_block()
         refreshed = local_license_status()
         refreshed["offline"] = False
         return _safe_public_status(refreshed)
     except (httpx.HTTPError, RuntimeError, ValueError):
+        if settings.licensing_online_required:
+            message = (
+                "Lisans sunucusuna bağlanılamadı. Pawgram'ı kullanmak için internet bağlantısı ve "
+                "lisans sunucusu erişimi gereklidir."
+            )
+            _set_runtime_block("server_unreachable", message)
+            return {
+                "required": True,
+                "valid": False,
+                "status": "server_unreachable",
+                "message": message,
+                "offline": False,
+            }
         fallback = local_license_status()
         fallback["offline"] = bool(fallback["valid"])
         if fallback["valid"]:
@@ -233,6 +289,7 @@ async def refresh_license() -> dict:
 
 async def license_refresh_loop() -> None:
     while True:
-        if get_settings().licensing_enforced:
+        settings = get_settings()
+        if settings.licensing_enforced:
             await refresh_license()
-        await asyncio.sleep(max(300, get_settings().license_check_interval_minutes * 60))
+        await asyncio.sleep(settings.license_refresh_interval_seconds)

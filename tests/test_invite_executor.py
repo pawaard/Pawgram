@@ -279,6 +279,9 @@ class InviteExecutorTests(unittest.TestCase):
             notifications = connection.execute(
                 "SELECT title, message FROM notifications ORDER BY id"
             ).fetchall()
+            rpc_log = connection.execute(
+                "SELECT message FROM system_logs WHERE category='telegram_rpc' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
         self.assertEqual(job["status"], "completed")
         self.assertEqual(job["session_id"], replacement_id)
         self.assertEqual(candidate["status"], "invited")
@@ -287,6 +290,9 @@ class InviteExecutorTests(unittest.TestCase):
         self.assertIn("Pawgram bekleme süresi eklemedi", session["last_error"])
         self.assertIsNone(invite_usage)
         self.assertEqual(replacement_usage["invite_count"], 1)
+        self.assertIsNotNone(rpc_log)
+        self.assertIn("stage=invite_submission", rpc_log["message"])
+        self.assertIn("request=AddChatUserRequest", rpc_log["message"])
         self.assertTrue(
             any(
                 row["title"] == "Davet session'ı değiştirildi"
@@ -312,12 +318,9 @@ class InviteExecutorTests(unittest.TestCase):
         from app.telegram_service import execute_invite_job
 
         target = Chat(200, "Hedef", ChatPhotoEmpty(), 0, datetime.now(UTC), 1, creator=True)
-        user = User(77, access_hash=777001, first_name="Rızalı", username="rizali_uye")
 
         class FloodedClient:
             async def __call__(self, request):
-                if isinstance(request, GetUsersRequest):
-                    return [user]
                 raise PeerFloodError(request=request)
 
             async def disconnect(self):
@@ -340,10 +343,16 @@ class InviteExecutorTests(unittest.TestCase):
             notifications = connection.execute(
                 "SELECT title, message FROM notifications ORDER BY id"
             ).fetchall()
+            rpc_log = connection.execute(
+                "SELECT message FROM system_logs WHERE category='telegram_rpc' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
 
         self.assertEqual(job["status"], "telegram_restricted")
         self.assertIsNone(job["resume_at"])
         self.assertIn("Pawgram ek bir bekleme süresi üretmedi", job["last_error"])
+        self.assertIsNotNone(rpc_log)
+        self.assertIn("stage=candidate_resolution", rpc_log["message"])
+        self.assertIn("request=GetUsersRequest", rpc_log["message"])
         self.assertTrue(
             any("sıradaki uygun session aranıyor" in row["message"] for row in notifications)
         )

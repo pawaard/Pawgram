@@ -69,6 +69,47 @@ DEFAULT_LOGIN_PROXY_REVISION_SETTING = "default_login_proxy_revision"
 CUSTOMER_PROXY_BUNDLE_FILENAME = "customer-proxy.json"
 
 
+def _telegram_rpc_request_name(error: BaseException) -> str:
+    """Return the concrete Telegram RPC request attached to a Telethon error."""
+    request = getattr(error, "request", None)
+    wrapper_names = {
+        "InvokeAfterMsgRequest",
+        "InvokeAfterMsgsRequest",
+        "InitConnectionRequest",
+        "InvokeWithLayerRequest",
+        "InvokeWithoutUpdatesRequest",
+        "InvokeWithMessagesRangeRequest",
+        "InvokeWithTakeoutRequest",
+    }
+    while request is not None and type(request).__name__ in wrapper_names:
+        request = getattr(request, "query", None)
+    return type(request).__name__ if request is not None else "UnknownRequest"
+
+
+def _peer_flood_diagnostic(error: PeerFloodError, stage: str) -> str:
+    request_name = _telegram_rpc_request_name(error)
+    code = getattr(error, "code", None)
+    detail = " ".join(str(error).split()) or "Too many requests"
+    return (
+        f"PEER_FLOOD stage={stage}; request={request_name}; "
+        f"error={type(error).__name__}; code={code if code is not None else 'unknown'}; "
+        f"detail={detail}"
+    )
+
+
+def _peer_flood_reason(session_id: int, error: PeerFloodError, stage: str) -> str:
+    request_name = _telegram_rpc_request_name(error)
+    action = {
+        "candidate_resolution": "kullanıcı referansı doğrulama",
+        "invite_submission": "doğrudan üye ekleme",
+        "session_open": "Telegram session hazırlama",
+    }.get(stage, "Telegram RPC")
+    return (
+        f"Session #{session_id} için Telegram {action} isteğine "
+        f"PEER_FLOOD (Too many requests) yanıtı verdi [request={request_name}]"
+    )
+
+
 class GroupJoinPending(RuntimeError):
     def __init__(self, session_id: int, group_title: str):
         self.session_id = session_id
@@ -2316,15 +2357,21 @@ async def execute_invite_job(job_id: int) -> None:
                     pending_handoff_reason = reason
                     last_session_id = selected_session_id
                     continue
-                except PeerFloodError:
-                    reason = (
-                        f"Session #{selected_session_id} için Telegram hesap düzeyinde işlem kısıtı bildirdi"
-                    )
+                except PeerFloodError as error:
+                    stage = "session_open"
+                    reason = _peer_flood_reason(selected_session_id, error, stage)
                     message = (
                         f"{reason}; Telegram süre bildirmediği için Pawgram bekleme süresi eklemedi. "
                         "Session yalnızca bu çalışma turunda atlanıyor ve sıradaki uygun session aranıyor."
                     )
                     _record_invite_peer_flood(selected_session_id, message)
+                    add_log(
+                        "error",
+                        "telegram_rpc",
+                        _peer_flood_diagnostic(error, stage),
+                        selected_session_id,
+                        job_id,
+                    )
                     add_log("warning", "peer_flood", message, selected_session_id, job_id)
                     add_notification("warning", "Telegram hesap kısıtı", message, "sessions")
                     peer_flood_session_ids.add(selected_session_id)
@@ -2441,6 +2488,7 @@ async def execute_invite_job(job_id: int) -> None:
                 current_session_id,
                 job_id,
             )
+            peer_flood_stage = "candidate_resolution"
             try:
                 user = await _resolve_invite_candidate(context, candidate)
                 if user is None:
@@ -2455,6 +2503,7 @@ async def execute_invite_job(job_id: int) -> None:
                         if isinstance(context.target, Channel)
                         else AddChatUserRequest(context.target.id, user, fwd_limit=0)
                     )
+                    peer_flood_stage = "invite_submission"
                     await asyncio.wait_for(context.client(request), timeout=45)
                     status, reason, counter = (
                         "invited",
@@ -2475,10 +2524,8 @@ async def execute_invite_job(job_id: int) -> None:
                 await _close_invite_session(context)
                 context = None
                 continue
-            except PeerFloodError:
-                reason = (
-                    f"Session #{current_session_id} için Telegram hesap düzeyinde işlem kısıtı bildirdi"
-                )
+            except PeerFloodError as error:
+                reason = _peer_flood_reason(current_session_id, error, peer_flood_stage)
                 deferred = _defer_invite_candidate(candidates, candidate_index)
                 queue_note = " ve kuyruğun sonuna alındı" if deferred else ""
                 message = (
@@ -2487,6 +2534,13 @@ async def execute_invite_job(job_id: int) -> None:
                     "ve sıradaki uygun session aranıyor."
                 )
                 _record_invite_peer_flood(current_session_id, message)
+                add_log(
+                    "error",
+                    "telegram_rpc",
+                    _peer_flood_diagnostic(error, peer_flood_stage),
+                    current_session_id,
+                    job_id,
+                )
                 add_log("warning", "peer_flood", message, current_session_id, job_id)
                 add_notification("warning", "Telegram hesap kısıtı", message, "sessions")
                 peer_flood_session_ids.add(current_session_id)

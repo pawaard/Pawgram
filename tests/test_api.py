@@ -71,6 +71,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 402)
         self.assertTrue(response.json()["license_required"])
 
+        with (
+            patch("app.main.local_license_status", return_value=invalid),
+            patch("app.main.schedule_shutdown", return_value=True) as schedule,
+        ):
+            response = self.client.post("/api/system/shutdown")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["closing"])
+        schedule.assert_called_once_with()
+
     def test_job_creation_with_schedule(self):
         from app.database import get_connection, utc_now
 

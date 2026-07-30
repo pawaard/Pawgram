@@ -11,12 +11,29 @@ from pathlib import Path
 from typing import BinaryIO
 
 # PyInstaller'ın penceresiz Windows derlemesinde standart çıktı akışları None
-# olabilir. Uvicorn ve bazı bağımlılıklar bu akışları kontrol ettiği için EXE
-# daha port açmadan kapanmasın.
-if sys.stdout is None:
-    sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - process-lifetime stream
-if sys.stderr is None:
-    sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - process-lifetime stream
+# olabilir. Uvicorn başlangıç hatalarını kaybetmemek için bu akışları uygulama
+# veri klasöründeki kalıcı tanılama kaydına yönlendir.
+if sys.stdout is None or sys.stderr is None:
+    try:
+        startup_log_dir = (
+            Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
+        ) / "data"
+        startup_log_dir.mkdir(parents=True, exist_ok=True)
+        startup_stream = (startup_log_dir / "startup.log").open(
+            "a",
+            encoding="utf-8",
+            buffering=1,
+        )
+    except OSError:
+        startup_stream = open(  # noqa: SIM115 - process-lifetime stream
+            os.devnull,
+            "w",
+            encoding="utf-8",
+        )
+    if sys.stdout is None:
+        sys.stdout = startup_stream
+    if sys.stderr is None:
+        sys.stderr = startup_stream
 
 import uvicorn
 

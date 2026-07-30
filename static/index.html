@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=0.4.7">
+  <link rel="stylesheet" href="/static/features.css?v=0.4.8">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -548,6 +548,7 @@
       <p id="license-description">Bu ticari sürümü kullanmak için lisansınızı etkinleştirin.</p>
       <label>Lisans kodu<input id="license-key" type="text" maxlength="64" placeholder="PAWG-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off"></label>
       <button class="primary full" id="license-activate">Lisansı etkinleştir</button>
+      <button class="danger-button full license-close-button" id="license-shutdown">Programı kapat</button>
       <div id="license-message" class="form-message hidden"></div>
       <small class="license-privacy">Cihaz kimliği tek yönlü özetlenerek gönderilir; telefon numarası ve Telegram verileri lisans sunucusuna gönderilmez.</small>
     </div>
@@ -583,6 +584,6 @@
   <div id="runtime-overlay" class="runtime-overlay hidden">
     <div><span class="runtime-spinner" aria-hidden="true"></span><h2 id="runtime-overlay-title">Pawgram kapatılıyor</h2><p id="runtime-overlay-message">Bu tarayıcı sekmesini kapatabilirsiniz.</p></div>
   </div>
-  <script src="/static/app.js?v=0.4.7"></script>
+  <script src="/static/app.js?v=0.4.8"></script>
 </body>
 </html>

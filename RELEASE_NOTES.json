@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.4.8",
+    "release_date": "2026-07-30",
+    "title": "Zorunlu çevrim içi lisans doğrulaması",
+    "changes": [
+      "GitHub güncelleme paketi artık ticari lisans zorunluluğunu kaynak içine gömülü olarak koruyor",
+      "Pawgram her açılışta lisansı üretim sunucusunda doğruluyor; iptal edilmiş veya geçersiz lisansla panel ve Telegram işleri çalışmıyor",
+      "Lisans durumu çalışan uygulamada dakikada bir yenileniyor ve sunucu reddi kalıcı olarak lisans ekranında gösteriliyor",
+      "Lisans ekranına müşteri verilerine dokunmadan uygulamayı güvenli biçimde kapatma düğmesi eklendi",
+      "Güncelleme data klasörünü, telefonları, Telegram sessionlarını, işleri ve kullanıcı ayarlarını koruyor"
+    ]
+  },
+  {
     "version": "0.4.7",
     "release_date": "2026-07-30",
     "title": "Hızlı aktarım ve Telegram odaklı limitler",
