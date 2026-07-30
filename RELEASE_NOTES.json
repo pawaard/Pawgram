@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.4.7",
+    "release_date": "2026-07-30",
+    "title": "Hızlı aktarım ve Telegram odaklı limitler",
+    "changes": [
+      "Yeni aktarım işlerinde Pawgram kaynaklı adaylar arası bekleme ve günlük kota varsayılan olarak kapatıldı",
+      "Session parti limiti ve cooldown için 0 değeri sınırsız olarak destekleniyor; eski varsayılan 3/20 ayarı otomatik kaldırılıyor",
+      "Telegram süre vermeyen PeerFlood cevabında Pawgram artık kendiliğinden 24 saat bekleme üretmiyor",
+      "Session değişiminde korunmuş aday kuyruğun sonuna alınarak aynı adayın bütün hesaplarda art arda denenmesi önleniyor",
+      "Aday hazırlama, istenen kullanıcı sayısına göre ölçeklenen hızlı tarama ve ayrıntılı ilerleme logları kullanıyor",
+      "Activity Scan session uygunluk kuralları invite rotasyonundan bağımsız kalmaya devam ediyor",
+      "Güncelleme mevcut telefonları, Telegram session verilerini, işleri ve tarama sonuçlarını koruyor; yönetilen proxy revizyonu ayrı olarak uygulanıyor"
+    ]
+  },
+  {
     "version": "0.4.6",
     "release_date": "2026-07-30",
     "title": "Otomatik proxy dağıtımı",

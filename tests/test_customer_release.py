@@ -33,8 +33,8 @@ class CustomerReleaseTests(unittest.TestCase):
         self.assertIn("#login-step-phone { display: grid", css)
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", css)
         self.assertIn("@media (max-height: 800px)", css)
-        self.assertIn('/static/features.css?v=0.4.6', html)
-        self.assertIn('/static/app.js?v=0.4.6', html)
+        self.assertIn('/static/features.css?v=0.4.7', html)
+        self.assertIn('/static/app.js?v=0.4.7', html)
         self.assertNotIn('id="activity-transfer-max" type="number" min="1" max="1000"', html)
         self.assertIn("syncViewportMetrics", javascript)
         self.assertIn('root.dataset.viewportMode', javascript)
@@ -72,7 +72,7 @@ class CustomerReleaseTests(unittest.TestCase):
             encoding="utf-8"
         )
         self.assertIn(
-            "FloodWait veya PeerFlood alan hesap beklemeye alınır ve sıradaki uygun hesapla devam edilir.",
+            "süre vermeyen hesap kısıtında Pawgram ek süre üretmeden sıradaki hesaba geçer.",
             html,
         )
         self.assertNotIn("FloodWait başka hesapla aşılmaz", html)
@@ -102,7 +102,7 @@ class CustomerReleaseTests(unittest.TestCase):
             initialize_release_tracking("0.4.0")
             self.assertIsNone(release_notes_overview("0.4.0")["pending_version"])
 
-    def test_safe_invite_defaults_are_consistent(self):
+    def test_unrestricted_invite_defaults_are_consistent(self):
         job = JobCreateRequest(
             name="Default test",
             session_id=1,
@@ -110,8 +110,11 @@ class CustomerReleaseTests(unittest.TestCase):
             target_ref="@target",
         )
         transfer = ActivityTransferRequest(target_ref="@target")
-        self.assertEqual((job.min_delay_seconds, job.max_delay_seconds), (20, 40))
-        self.assertEqual((transfer.min_delay_seconds, transfer.max_delay_seconds), (20, 40))
+        self.assertEqual((job.min_delay_seconds, job.max_delay_seconds, job.daily_limit), (0, 0, 0))
+        self.assertEqual(
+            (transfer.min_delay_seconds, transfer.max_delay_seconds, transfer.daily_limit),
+            (0, 0, 0),
+        )
 
     def test_fresh_database_has_safe_job_and_heartbeat_defaults(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
@@ -129,12 +132,74 @@ class CustomerReleaseTests(unittest.TestCase):
                     connection.execute("SELECT key, value FROM app_settings").fetchall()
                 )
 
-            self.assertEqual(columns["min_delay_seconds"], "20")
-            self.assertEqual(columns["max_delay_seconds"], "40")
+            self.assertEqual(columns["min_delay_seconds"], "0")
+            self.assertEqual(columns["max_delay_seconds"], "0")
+            self.assertEqual(columns["daily_limit"], "0")
+            self.assertEqual(app_settings["invite_unrestricted_defaults_v1"], "true")
             self.assertEqual(app_settings["heartbeat_enabled"], "false")
             self.assertEqual(app_settings["heartbeat_interval_minutes"], "60")
             self.assertEqual(app_settings["heartbeat_group_id"], "")
             self.assertEqual(app_settings["heartbeat_message_template"], "Merhabaa")
+
+    def test_legacy_default_limits_are_migrated_without_touching_session_data(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp:
+            database_path = Path(temp) / "customer.db"
+            settings = SimpleNamespace(database_path=database_path)
+            with patch("app.database.get_settings", return_value=settings):
+                initialize_database()
+                with sqlite3.connect(database_path) as connection:
+                    now = "2026-07-30T00:00:00+00:00"
+                    session_id = connection.execute(
+                        """
+                        INSERT INTO telegram_sessions(
+                            label, phone_masked, phone_encrypted, session_encrypted,
+                            status, flood_wait_until, last_error,
+                            invite_batch_limit, invite_cooldown_minutes,
+                            created_at, updated_at
+                        ) VALUES ('Eski', '+90 ***', 'phone-secret', 'session-secret',
+                                  'flood_wait', '2026-07-31T00:00:00+00:00',
+                                  'Telegram spam koruması ve 24 saat dinlenme',
+                                  3, 20, ?, ?)
+                        """,
+                        (now, now),
+                    ).lastrowid
+                    connection.execute(
+                        """
+                        INSERT INTO transfer_jobs(
+                            name, session_id, source_ref, target_ref, status,
+                            min_delay_seconds, max_delay_seconds, daily_limit,
+                            created_at, updated_at
+                        ) VALUES ('Eski iş', ?, '@source', '@target', 'approved',
+                                  20, 40, 50, ?, ?)
+                        """,
+                        (session_id, now, now),
+                    )
+                    connection.execute(
+                        "DELETE FROM app_settings WHERE key='invite_unrestricted_defaults_v1'"
+                    )
+                    connection.commit()
+                initialize_database()
+
+            with sqlite3.connect(database_path) as connection:
+                session = connection.execute(
+                    """
+                    SELECT phone_encrypted, session_encrypted, status, flood_wait_until,
+                           invite_batch_limit, invite_cooldown_minutes
+                    FROM telegram_sessions WHERE id=?
+                    """,
+                    (session_id,),
+                ).fetchone()
+                job = connection.execute(
+                    """
+                    SELECT min_delay_seconds, max_delay_seconds, daily_limit
+                    FROM transfer_jobs WHERE session_id=?
+                    """,
+                    (session_id,),
+                ).fetchone()
+
+            self.assertEqual(session[:2], ("phone-secret", "session-secret"))
+            self.assertEqual(session[2:], ("active", None, 0, 0))
+            self.assertEqual(job, (0, 0, 0))
 
     def test_release_verifier_accepts_clean_customer_package(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -222,8 +222,17 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(policy.status_code, 200, policy.text)
         self.assertEqual(policy.json()["batch_limit"], 4)
         self.assertEqual(policy.json()["cooldown_minutes"], 20)
-        self.assertFalse(policy.json()["switch_on_error"])
-        self.assertFalse(policy.json()["switch_on_flood_wait"])
+        self.assertTrue(policy.json()["switch_on_error"])
+        self.assertTrue(policy.json()["switch_on_flood_wait"])
+
+        unlimited = self.client.put(
+            f"/api/sessions/{session_id}/invite-policy",
+            json={"batch_limit": 0, "cooldown_minutes": 0},
+        )
+        self.assertEqual(unlimited.status_code, 200, unlimited.text)
+        policy = self.client.get(f"/api/sessions/{session_id}/invite-policy")
+        self.assertEqual(policy.json()["batch_limit"], 0)
+        self.assertEqual(policy.json()["cooldown_minutes"], 0)
 
     def test_session_list_includes_read_only_usage_and_recent_event_summary(self):
         from app.database import get_connection, utc_now

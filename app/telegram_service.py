@@ -1346,7 +1346,9 @@ async def _iter_transfer_source_users(
         sender_id = getattr(message, "sender_id", None)
         if not sender_id or sender_id in seen_ids:
             continue
-        sender = await message.get_sender()
+        sender = getattr(message, "sender", None)
+        if not isinstance(sender, User):
+            sender = await message.get_sender()
         if not isinstance(sender, User):
             continue
         message_id = getattr(message, "id", None)
@@ -1382,16 +1384,55 @@ async def preview_job_candidates(job: dict) -> dict:
                 "veya hesabı 'Kullanıcı davet et' yetkili yönetici yapın."
             )
 
+        fast_preview = (
+            int(job.get("min_delay_seconds") or 0) == 0
+            and int(job.get("max_delay_seconds") or 0) == 0
+            and int(job.get("daily_limit") or 0) == 0
+        )
+        requested_users = max(1, int(job.get("max_users") or 1))
+        target_member_limit = (
+            min(5000, max(500, requested_users * 3)) if fast_preview else 20000
+        )
+        source_message_limit = (
+            min(50000, max(2000, requested_users * 15)) if fast_preview else 50000
+        )
+        add_log(
+            "info",
+            "preview_progress",
+            (
+                f"Aday hazırlama başladı: hedef üye ön kontrol limiti {target_member_limit}, "
+                f"kaynak mesaj limiti {source_message_limit}, "
+                f"Pawgram hız profili {'açık' if fast_preview else 'özel ayar'}"
+            ),
+            session_id,
+            job_id,
+        )
+
         target_member_ids: set[int] = set()
         try:
-            async for target_user in client.iter_participants(target, limit=20000):
+            async for target_user in client.iter_participants(
+                target,
+                limit=target_member_limit,
+            ):
                 target_member_ids.add(target_user.id)
         except FloodWaitError:
             raise
         except Exception as error:
-            raise RuntimeError(
-                "Gönderilecek grubun mevcut üyeleri okunamadı. Tekrarları güvenle ayıklamak için hesapta yeterli grup yetkisi olmalı."
-            ) from error
+            if not fast_preview:
+                raise RuntimeError(
+                    "Gönderilecek grubun mevcut üyeleri okunamadı. Tekrarları güvenle ayıklamak için hesapta yeterli grup yetkisi olmalı."
+                ) from error
+            add_log(
+                "warning",
+                "preview_progress",
+                (
+                    "Hız profilinde hedef üye listesi önceden okunamadı; mevcut üyeler "
+                    "Telegram'ın doğrudan ekleme cevabıyla ayıklanacak. "
+                    f"Ayrıntı: {type(error).__name__}"
+                ),
+                session_id,
+                job_id,
+            )
 
         source_admin_ids: set[int] = set()
         try:
@@ -1518,10 +1559,13 @@ async def preview_job_candidates(job: dict) -> dict:
                 break
 
         if counts["eligible"] < job["max_users"]:
+            source_users_seen = 0
             async for user, source_message_id in _iter_transfer_source_users(
                 client,
                 source,
+                message_limit=source_message_limit,
             ):
+                source_users_seen += 1
                 display_name = " ".join(
                     value for value in [user.first_name, user.last_name] if value
                 ).strip() or "İsimsiz kullanıcı"
@@ -1535,6 +1579,18 @@ async def preview_job_candidates(job: dict) -> dict:
                     is_deleted=bool(getattr(user, "deleted", False)),
                 ):
                     break
+                if source_users_seen % 250 == 0:
+                    add_log(
+                        "info",
+                        "preview_progress",
+                        (
+                            f"Kaynak grupta {source_users_seen} benzersiz mesaj yazarı incelendi; "
+                            f"{counts['eligible']}/{job['max_users']} uygun aday hazır."
+                        ),
+                        session_id,
+                        job_id,
+                    )
+                    await asyncio.sleep(0)
 
         now = utc_now()
         with get_connection() as connection:
@@ -1572,6 +1628,7 @@ async def preview_job_candidates(job: dict) -> dict:
             "target_members_checked": len(target_member_ids),
             "source_admins_excluded": len(source_admin_ids),
             "history_users_checked": len(previously_used_ids),
+            "source_message_limit": source_message_limit,
             "permissions": {
                 "can_invite_users": can_invite,
                 "is_creator": bool(getattr(target, "creator", False)),
@@ -1604,8 +1661,8 @@ class InviteSessionSelection:
     resume_at: datetime | None = None
     invite_count: int = 0
     batch_success_count: int = 0
-    invite_batch_limit: int = 3
-    invite_cooldown_minutes: int = 20
+    invite_batch_limit: int = 0
+    invite_cooldown_minutes: int = 0
 
 
 @dataclass
@@ -1643,12 +1700,14 @@ def select_next_available_session(
     working_start: str = "00:00",
     working_end: str = "23:59",
     excluded_session_ids: set[int] | None = None,
+    excluded_session_reasons: dict[int, str] | None = None,
     now: datetime | None = None,
     job_id: int | None = None,
 ) -> InviteSessionSelection:
     """Select one immediately usable invite session and calculate the next recovery time."""
     current_time = (now or datetime.now(UTC)).astimezone(UTC)
     excluded = excluded_session_ids or set()
+    exclusion_reasons = excluded_session_reasons or {}
     rows = connection.execute(
         """
         SELECT s.id, s.label, s.session_encrypted, s.status,
@@ -1741,7 +1800,7 @@ def select_next_available_session(
             proxy_error = str(row.get("proxy_last_error") or "proxy testi başarısız")
             reasons.append(f"proxy kullanılamıyor: {proxy_error}")
             permanently_rejected = True
-        if int(row.get("invite_count") or 0) >= daily_limit:
+        if daily_limit > 0 and int(row.get("invite_count") or 0) >= daily_limit:
             session_resume = max(session_resume, quota_resume) if session_resume else quota_resume
             reasons.append(
                 f"günlük davet kotası dolu: {int(row.get('invite_count') or 0)}/{daily_limit}; "
@@ -1753,7 +1812,12 @@ def select_next_available_session(
             operation = row.get("operation_label") or row.get("operation_type") or "başka bir Telegram işlemi"
             reasons.append(f"session işlem kilidi altında: {operation}")
         if session_id in excluded:
-            reasons.append("hedef gruba erişemediği veya üye ekleme yetkisi olmadığı için bu iş turunda hariç tutuldu")
+            reasons.append(
+                exclusion_reasons.get(
+                    session_id,
+                    "bu invite çalışma turunda kullanılamadığı için hariç tutuldu",
+                )
+            )
             permanently_rejected = True
         if permanently_rejected:
             audit.append((row, status, False, reasons))
@@ -1765,7 +1829,11 @@ def select_next_available_session(
         reasons.extend(
             [
                 f"status uygun: {status}",
-                f"günlük davet kotası uygun: {int(row.get('invite_count') or 0)}/{daily_limit}",
+                (
+                    f"günlük Pawgram kotası uygun: {int(row.get('invite_count') or 0)}/{daily_limit}"
+                    if daily_limit > 0
+                    else "günlük Pawgram kotası kapalı"
+                ),
                 f"proxy uygun: {row.get('proxy_last_status') or 'durum kaydı yok'}",
                 "session işlem kilidi yok",
             ]
@@ -1824,8 +1892,8 @@ def select_next_available_session(
         session_id=int(selected["id"]),
         invite_count=int(selected.get("invite_count") or 0),
         batch_success_count=int(selected.get("batch_success_count") or 0),
-        invite_batch_limit=max(1, int(selected.get("invite_batch_limit") or 3)),
-        invite_cooldown_minutes=max(5, int(selected.get("invite_cooldown_minutes") or 20)),
+        invite_batch_limit=max(0, int(selected.get("invite_batch_limit") or 0)),
+        invite_cooldown_minutes=max(0, int(selected.get("invite_cooldown_minutes") or 0)),
     )
 
 
@@ -2007,6 +2075,19 @@ def _mark_invite_flood_wait(
         )
 
 
+def _record_invite_peer_flood(session_id: int, message: str) -> None:
+    """Record Telegram's duration-less account restriction without inventing a wait time."""
+    with get_connection() as connection:
+        connection.execute(
+            """
+            UPDATE telegram_sessions
+            SET status='active', flood_wait_until=NULL, last_error=?, updated_at=?
+            WHERE id=?
+            """,
+            (message[:500], utc_now(), session_id),
+        )
+
+
 def _mark_invite_proxy_error(session_id: int, message: str) -> None:
     with get_connection() as connection:
         connection.execute(
@@ -2020,10 +2101,19 @@ def _mark_invite_proxy_error(session_id: int, message: str) -> None:
         )
 
 
+def _defer_invite_candidate(candidates: list[dict], candidate_index: int) -> bool:
+    """Move a preserved candidate behind the remaining queue after a session-level error."""
+    if candidate_index < 0 or candidate_index >= len(candidates) - 1:
+        return False
+    candidates.append(candidates.pop(candidate_index))
+    return True
+
+
 def _schedule_invite_for_available_session(
     job_id: int,
     selection: InviteSessionSelection,
     last_error: str | None = None,
+    unavailable_status: str = "proxy_error",
 ) -> None:
     now = utc_now()
     if selection.resume_at is not None:
@@ -2038,7 +2128,7 @@ def _schedule_invite_for_available_session(
             "Kullanılabilir Telegram session bulunamadı. Kalan adaylar korunmuştur; "
             "devre dışı veya proxy hatalı hesapları kontrol edin."
         )
-        status = "proxy_error"
+        status = unavailable_status
         resume_at = None
     with get_connection() as connection:
         connection.execute(
@@ -2067,6 +2157,7 @@ async def execute_invite_job(job_id: int) -> None:
         "paused_batch",
         "proxy_error",
         "flood_wait",
+        "telegram_restricted",
         "queued_execution",
     }
     with get_connection() as connection:
@@ -2089,7 +2180,7 @@ async def execute_invite_job(job_id: int) -> None:
                 last_error=NULL, updated_at=?
             WHERE id=? AND status IN (
                 'approved', 'scheduled', 'paused_quota', 'paused_batch',
-                'proxy_error', 'flood_wait', 'queued_execution'
+                'proxy_error', 'flood_wait', 'telegram_restricted', 'queued_execution'
             )
             """,
             (now, now, job_id),
@@ -2107,7 +2198,7 @@ async def execute_invite_job(job_id: int) -> None:
             )
         return
 
-    configured_quota = max(1, int(job["daily_limit"]))
+    configured_quota = max(0, int(job.get("daily_limit") or 0))
     current_session_id = int(job["session_id"])
     last_session_id = current_session_id
     preferred_session_id: int | None = current_session_id
@@ -2117,6 +2208,7 @@ async def execute_invite_job(job_id: int) -> None:
     pending_handoff_from_session_id: int | None = None
     pending_handoff_reason: str | None = None
     target_unavailable_session_ids: set[int] = set()
+    peer_flood_session_ids: set[int] = set()
 
     try:
         while candidate_index < len(candidates):
@@ -2137,6 +2229,16 @@ async def execute_invite_job(job_id: int) -> None:
 
             if context is None:
                 today = datetime.now(UTC).date().isoformat()
+                exclusion_reasons = {
+                    session_id: "hedef gruba erişemediği veya üye ekleme yetkisi olmadığı için bu invite turunda hariç tutuldu"
+                    for session_id in target_unavailable_session_ids
+                }
+                exclusion_reasons.update(
+                    {
+                        session_id: "Telegram süre vermeyen hesap kısıtı bildirdiği için yalnızca bu invite turunda hariç tutuldu"
+                        for session_id in peer_flood_session_ids
+                    }
+                )
                 with get_connection() as connection:
                     selection = select_next_available_session(
                         connection,
@@ -2146,26 +2248,54 @@ async def execute_invite_job(job_id: int) -> None:
                         preferred_session_id=preferred_session_id,
                         working_start=str(job.get("working_start") or "00:00"),
                         working_end=str(job.get("working_end") or "23:59"),
-                        excluded_session_ids=target_unavailable_session_ids,
+                        excluded_session_ids=(
+                            target_unavailable_session_ids | peer_flood_session_ids
+                        ),
+                        excluded_session_reasons=exclusion_reasons,
                         job_id=job_id,
                     )
                 preferred_session_id = None
                 if selection.session_id is None:
-                    if target_unavailable_session_ids and selection.resume_at is None:
-                        rejected = ", ".join(
-                            f"#{session_id}" for session_id in sorted(target_unavailable_session_ids)
-                        )
-                        raise RuntimeError(
-                            "Hedef grupta kullanılabilir üye ekleme yetkisine sahip Telegram session "
-                            f"bulunamadı. Reddedilen session'lar: {rejected}. "
-                            "Sessionlar ekranındaki 'Sessionları gruba hazırla' işlemini çalıştırın; "
-                            "grubun genel 'Üye ekle' iznini açın veya hesaplara "
-                            "'Kullanıcı davet et' yönetici yetkisi verin."
-                        )
+                    if selection.resume_at is None:
+                        unavailable_reasons: list[str] = []
+                        if target_unavailable_session_ids:
+                            rejected = ", ".join(
+                                f"#{session_id}"
+                                for session_id in sorted(target_unavailable_session_ids)
+                            )
+                            unavailable_reasons.append(
+                                "hedef grupta üye ekleme yetkisi olmayan session'lar: " + rejected
+                            )
+                        if peer_flood_session_ids:
+                            rejected = ", ".join(
+                                f"#{session_id}" for session_id in sorted(peer_flood_session_ids)
+                            )
+                            unavailable_reasons.append(
+                                "Telegram'ın bu çalışma turunda hesap kısıtı bildirdiği session'lar: "
+                                + rejected
+                            )
+                        if unavailable_reasons:
+                            last_unavailable_error = (
+                                "Bu çalışma turunda kullanılabilir Telegram session kalmadı; "
+                                + "; ".join(unavailable_reasons)
+                                + ". Kalan adaylar korunmuştur. Pawgram ek bir bekleme süresi üretmedi."
+                            )
+                        if target_unavailable_session_ids and not peer_flood_session_ids:
+                            raise RuntimeError(
+                                (last_unavailable_error or "Hedef grup için uygun session bulunamadı.")
+                                + " Sessionlar ekranındaki 'Sessionları gruba hazırla' işlemini çalıştırın; "
+                                "grubun genel 'Üye ekle' iznini açın veya hesaplara "
+                                "'Kullanıcı davet et' yönetici yetkisi verin."
+                            )
                     _schedule_invite_for_available_session(
                         job_id,
                         selection,
                         last_unavailable_error,
+                        unavailable_status=(
+                            "telegram_restricted"
+                            if peer_flood_session_ids
+                            else "proxy_error"
+                        ),
                     )
                     return
 
@@ -2187,17 +2317,20 @@ async def execute_invite_job(job_id: int) -> None:
                     last_session_id = selected_session_id
                     continue
                 except PeerFloodError:
-                    wait_until = datetime.now(UTC) + timedelta(hours=24)
                     reason = (
-                        f"Session #{selected_session_id} Telegram spam korumasına takıldı "
-                        "ve 24 saat dinlenmeye alındı"
+                        f"Session #{selected_session_id} için Telegram hesap düzeyinde işlem kısıtı bildirdi"
                     )
-                    message = f"{reason}; sıradaki uygun session aranıyor."
-                    _mark_invite_flood_wait(selected_session_id, wait_until, message)
+                    message = (
+                        f"{reason}; Telegram süre bildirmediği için Pawgram bekleme süresi eklemedi. "
+                        "Session yalnızca bu çalışma turunda atlanıyor ve sıradaki uygun session aranıyor."
+                    )
+                    _record_invite_peer_flood(selected_session_id, message)
                     add_log("warning", "peer_flood", message, selected_session_id, job_id)
-                    add_notification("warning", "Telegram ekleme kısıtlaması", message, "sessions")
+                    add_notification("warning", "Telegram hesap kısıtı", message, "sessions")
+                    peer_flood_session_ids.add(selected_session_id)
                     pending_handoff_from_session_id = selected_session_id
                     pending_handoff_reason = reason
+                    last_unavailable_error = message
                     last_session_id = selected_session_id
                     continue
                 except ProxyUnavailableError as error:
@@ -2290,7 +2423,7 @@ async def execute_invite_job(job_id: int) -> None:
                         job_id,
                     )
 
-            if context.invite_count >= configured_quota:
+            if configured_quota > 0 and context.invite_count >= configured_quota:
                 reason = f"Session #{current_session_id} günlük {configured_quota} başarılı davet sınırına ulaştı"
                 message = f"{reason}; sıradaki uygun session aranıyor."
                 add_log("warning", "quota", message, current_session_id, job_id)
@@ -2331,7 +2464,9 @@ async def execute_invite_job(job_id: int) -> None:
             except FloodWaitError as error:
                 wait_until = datetime.now(UTC) + timedelta(seconds=error.seconds)
                 reason = f"Session #{current_session_id} {error.seconds} saniye FloodWait aldı"
-                message = f"{reason}; aday korunarak sıradaki uygun session aranıyor."
+                deferred = _defer_invite_candidate(candidates, candidate_index)
+                queue_note = " ve kuyruğun sonuna alındı" if deferred else ""
+                message = f"{reason}; aday korundu{queue_note}, sıradaki uygun session aranıyor."
                 _mark_invite_flood_wait(current_session_id, wait_until, message)
                 add_log("warning", "flood_wait", message, current_session_id, job_id)
                 add_notification("warning", "Session geçici olarak bekliyor", message, "sessions")
@@ -2341,17 +2476,23 @@ async def execute_invite_job(job_id: int) -> None:
                 context = None
                 continue
             except PeerFloodError:
-                wait_until = datetime.now(UTC) + timedelta(hours=24)
                 reason = (
-                    f"Session #{current_session_id} Telegram spam korumasına takıldı "
-                    "ve 24 saat dinlenmeye alındı"
+                    f"Session #{current_session_id} için Telegram hesap düzeyinde işlem kısıtı bildirdi"
                 )
-                message = f"{reason}; aday korunarak sıradaki uygun session aranıyor."
-                _mark_invite_flood_wait(current_session_id, wait_until, message)
+                deferred = _defer_invite_candidate(candidates, candidate_index)
+                queue_note = " ve kuyruğun sonuna alındı" if deferred else ""
+                message = (
+                    f"{reason}; Telegram süre bildirmediği için Pawgram bekleme süresi eklemedi. "
+                    f"Aday korundu{queue_note}; session yalnızca bu çalışma turunda atlanıyor "
+                    "ve sıradaki uygun session aranıyor."
+                )
+                _record_invite_peer_flood(current_session_id, message)
                 add_log("warning", "peer_flood", message, current_session_id, job_id)
-                add_notification("warning", "Telegram ekleme kısıtlaması", message, "sessions")
+                add_notification("warning", "Telegram hesap kısıtı", message, "sessions")
+                peer_flood_session_ids.add(current_session_id)
                 pending_handoff_from_session_id = current_session_id
                 pending_handoff_reason = reason
+                last_unavailable_error = message
                 await _close_invite_session(context)
                 context = None
                 continue
@@ -2467,19 +2608,33 @@ async def execute_invite_job(job_id: int) -> None:
                     )
                     context.invite_count += 1
                     context.batch_success_count += 1
-                    if context.batch_success_count >= context.invite_batch_limit:
+                    if (
+                        context.invite_batch_limit > 0
+                        and context.batch_success_count >= context.invite_batch_limit
+                    ):
                         cooldown_until = datetime.now(UTC) + timedelta(
                             minutes=context.invite_cooldown_minutes
                         )
-                        connection.execute(
-                            """
-                            UPDATE telegram_sessions
-                            SET status='batch_wait', batch_success_count=0,
-                                batch_cooldown_until=?, last_error=NULL, updated_at=?
-                            WHERE id=?
-                            """,
-                            (cooldown_until.isoformat(), now, current_session_id),
-                        )
+                        if context.invite_cooldown_minutes > 0:
+                            connection.execute(
+                                """
+                                UPDATE telegram_sessions
+                                SET status='batch_wait', batch_success_count=0,
+                                    batch_cooldown_until=?, last_error=NULL, updated_at=?
+                                WHERE id=?
+                                """,
+                                (cooldown_until.isoformat(), now, current_session_id),
+                            )
+                        else:
+                            connection.execute(
+                                """
+                                UPDATE telegram_sessions
+                                SET status='active', batch_success_count=0,
+                                    batch_cooldown_until=NULL, last_error=NULL, updated_at=?
+                                WHERE id=?
+                                """,
+                                (now, current_session_id),
+                            )
                         context.batch_success_count = 0
                         batch_wait_started = True
 
@@ -2507,14 +2662,18 @@ async def execute_invite_job(job_id: int) -> None:
             if batch_wait_started and remaining:
                 pending_handoff_reason = (
                     f"Session #{current_session_id} {context.invite_batch_limit} başarılı davetlik parti limitine ulaştı "
-                    f"ve {context.invite_cooldown_minutes} dakika dinlenmeye alındı"
+                    + (
+                        f"ve {context.invite_cooldown_minutes} dakika dinlenmeye alındı"
+                        if context.invite_cooldown_minutes > 0
+                        else "ve bekleme eklenmeden sıradaki session'a devredildi"
+                    )
                 )
                 handoff_message = (
                     f"{pending_handoff_reason}. Kalan {remaining} aday korunarak sıradaki uygun session aranıyor."
                 )
                 handoff_category = "batch_wait"
                 pending_handoff_from_session_id = current_session_id
-            elif context.invite_count >= configured_quota and remaining:
+            elif configured_quota > 0 and context.invite_count >= configured_quota and remaining:
                 pending_handoff_reason = (
                     f"Session #{current_session_id} günlük {configured_quota} başarılı davet sınırına ulaştı"
                 )

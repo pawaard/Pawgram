@@ -64,6 +64,14 @@ class InviteExecutorTests(unittest.TestCase):
         get_settings.cache_clear()
         self.temp_dir.cleanup()
 
+    def test_session_error_defers_candidate_behind_remaining_queue(self):
+        from app.telegram_service import _defer_invite_candidate
+
+        candidates = [{"id": 1}, {"id": 2}, {"id": 3}]
+        self.assertTrue(_defer_invite_candidate(candidates, 0))
+        self.assertEqual([candidate["id"] for candidate in candidates], [2, 3, 1])
+        self.assertFalse(_defer_invite_candidate(candidates, 2))
+
     def test_selected_candidate_is_invited_and_recorded(self):
         from app.database import get_connection
         from app.telegram_service import execute_invite_job
@@ -274,10 +282,9 @@ class InviteExecutorTests(unittest.TestCase):
         self.assertEqual(job["status"], "completed")
         self.assertEqual(job["session_id"], replacement_id)
         self.assertEqual(candidate["status"], "invited")
-        self.assertEqual(session["status"], "flood_wait")
-        flood_until = datetime.fromisoformat(session["flood_wait_until"])
-        self.assertGreater(flood_until, before + timedelta(hours=23, minutes=59))
-        self.assertLess(flood_until, before + timedelta(hours=24, minutes=1))
+        self.assertEqual(session["status"], "active")
+        self.assertIsNone(session["flood_wait_until"])
+        self.assertIn("Pawgram bekleme süresi eklemedi", session["last_error"])
         self.assertIsNone(invite_usage)
         self.assertEqual(replacement_usage["invite_count"], 1)
         self.assertTrue(
@@ -334,14 +341,14 @@ class InviteExecutorTests(unittest.TestCase):
                 "SELECT title, message FROM notifications ORDER BY id"
             ).fetchall()
 
-        self.assertEqual(job["status"], "scheduled")
-        self.assertIsNotNone(job["resume_at"])
-        self.assertIn("Tüm Telegram session'ları", job["last_error"])
+        self.assertEqual(job["status"], "telegram_restricted")
+        self.assertIsNone(job["resume_at"])
+        self.assertIn("Pawgram ek bir bekleme süresi üretmedi", job["last_error"])
         self.assertTrue(
             any("sıradaki uygun session aranıyor" in row["message"] for row in notifications)
         )
         self.assertTrue(
-            any(row["title"] == "Tüm session'lar beklemede" for row in notifications)
+            any(row["title"] == "Davet session'ı bulunamadı" for row in notifications)
         )
         self.assertFalse(
             any("hemen devam ediyor" in row["message"] for row in notifications)
@@ -696,6 +703,14 @@ class InviteExecutorTests(unittest.TestCase):
 
         now = utc_now()
         with get_connection() as connection:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET invite_batch_limit=3, invite_cooldown_minutes=20
+                WHERE id=?
+                """,
+                (self.session_id,),
+            )
             connection.executemany(
                 """
                 INSERT INTO job_candidates(

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pawgram</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/features.css?v=0.4.6">
+  <link rel="stylesheet" href="/static/features.css?v=0.4.7">
   <link rel="stylesheet" href="/static/license.css">
 </head>
 <body>
@@ -294,7 +294,7 @@
           <div class="panel" data-settings-section data-settings-keywords="koruma güvenlik floodwait round robin kota yönetici filtre önizleme">
             <div class="section-heading"><div><h2>Koruma kuralları</h2><p>Bu kurallar uygulamanın temel davranışıdır.</p></div></div>
             <div class="setting-row"><div><strong>FloodWait'e zorunlu uy</strong><small>Telegram'ın bildirdiği süre bitmeden işlem yapılmaz.</small></div><span class="toggle on"></span></div>
-            <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Davet hesapları sırayla kullanılır; FloodWait veya PeerFlood alan hesap beklemeye alınır ve sıradaki uygun hesapla devam edilir.</small></div><span class="toggle on"></span></div>
+            <div class="setting-row"><div><strong>Proaktif Round-Robin</strong><small>Davet hesapları sırayla kullanılır. FloodWait için Telegram'ın bildirdiği süre uygulanır; süre vermeyen hesap kısıtında Pawgram ek süre üretmeden sıradaki hesaba geçer.</small></div><span class="toggle on"></span></div>
             <div class="setting-row"><div><strong>Yönetici ve geçmiş filtresi</strong><small>Kaynak grup yöneticileri ile daha önce onaylanan kullanıcılar yeni aday listelerine alınmaz.</small></div><span class="toggle on"></span></div>
             <div class="setting-row"><div><strong>Önizleme varsayılan</strong><small>Yeni işler önce gerçek işlem yapmayan test modunda açılır.</small></div><span class="toggle on"></span></div>
             <div class="api-form rotation-form">
@@ -357,8 +357,8 @@
           </div>
           <div class="session-invite-policy">
             <div><strong>Otomatik session devri</strong><small>Bu session belirlenen sayıda başarılı ekleme yapınca dinlenir; iş, aynı tarama ve kalan adaylarla sıradaki sağlıklı session üzerinden otomatik sürer.</small></div>
-            <label>Başarılı ekleme limiti (X)<input id="invite-batch-limit" type="number" min="1" max="20" value="3"></label>
-            <label>Session dinlenme süresi<input id="invite-cooldown-minutes" type="number" min="5" max="240" value="20"></label>
+            <label>Başarılı ekleme limiti (0 = sınırsız)<input id="invite-batch-limit" type="number" min="0" value="0"></label>
+            <label>Session dinlenme süresi (dk)<input id="invite-cooldown-minutes" type="number" min="0" value="0"></label>
             <button class="primary" id="save-invite-policy">Devir ayarını kaydet</button>
             <div id="invite-policy-status" class="proxy-status">Bir session seçin.</div>
           </div>
@@ -458,9 +458,9 @@
         <label>Maksimum kullanıcı<input id="job-max" type="number" min="1" value="100"></label>
         <label>Çekilecek grup<input id="job-source" placeholder="-100... veya @kaynak"></label>
         <label>Gönderilecek grup<input id="job-target" placeholder="-100... veya @hedef"></label>
-        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="20"></label>
-        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="0" value="40"></label>
-        <label>Günlük koruma sınırı<input id="job-daily" type="number" min="1" value="50"></label>
+        <label>Minimum bekleme (sn)<input id="job-min-delay" type="number" min="0" value="0"></label>
+        <label>Maksimum bekleme (sn)<input id="job-max-delay" type="number" min="0" value="0"></label>
+        <label>Günlük Pawgram sınırı (0 = sınırsız)<input id="job-daily" type="number" min="0" value="0"></label>
         <label class="check-label"><input id="job-dry-run" type="checkbox" checked> Test/önizleme modu</label>
         <label>Planlanan başlangıç<input id="job-scheduled" type="datetime-local"></label>
         <label>Çalışma başlangıcı<input id="job-working-start" type="time" value="09:00"></label>
@@ -512,12 +512,12 @@
           <input id="activity-transfer-target" placeholder="@hedefgrup veya -100..."></label>
         <label>Hazırlanacak kullanıcı sayısı
           <input id="activity-transfer-max" type="number" min="1" value="100"></label>
-        <label>Günlük üye ekleme sınırı
-          <input id="activity-transfer-daily" type="number" min="1" max="1000" value="50"></label>
+        <label>Günlük Pawgram sınırı (0 = sınırsız)
+          <input id="activity-transfer-daily" type="number" min="0" value="0"></label>
         <label>Minimum bekleme (sn)
-          <input id="activity-transfer-min-delay" type="number" min="0" value="20"></label>
+          <input id="activity-transfer-min-delay" type="number" min="0" value="0"></label>
         <label>Maksimum bekleme (sn)
-          <input id="activity-transfer-max-delay" type="number" min="0" value="40"></label>
+          <input id="activity-transfer-max-delay" type="number" min="0" value="0"></label>
       </div>
       <button class="primary full" id="prepare-activity-transfer">Grubu bul ve adayları hazırla</button>
       <div id="activity-transfer-message" class="form-message hidden"></div>
@@ -583,6 +583,6 @@
   <div id="runtime-overlay" class="runtime-overlay hidden">
     <div><span class="runtime-spinner" aria-hidden="true"></span><h2 id="runtime-overlay-title">Pawgram kapatılıyor</h2><p id="runtime-overlay-message">Bu tarayıcı sekmesini kapatabilirsiniz.</p></div>
   </div>
-  <script src="/static/app.js?v=0.4.6"></script>
+  <script src="/static/app.js?v=0.4.7"></script>
 </body>
 </html>

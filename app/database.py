@@ -48,9 +48,9 @@ CREATE TABLE IF NOT EXISTS transfer_jobs (
     mode TEXT NOT NULL DEFAULT 'preview',
     status TEXT NOT NULL DEFAULT 'draft',
     max_users INTEGER NOT NULL DEFAULT 25,
-    min_delay_seconds INTEGER NOT NULL DEFAULT 20,
-    max_delay_seconds INTEGER NOT NULL DEFAULT 40,
-    daily_limit INTEGER NOT NULL DEFAULT 50,
+    min_delay_seconds INTEGER NOT NULL DEFAULT 0,
+    max_delay_seconds INTEGER NOT NULL DEFAULT 0,
+    daily_limit INTEGER NOT NULL DEFAULT 0,
     processed INTEGER NOT NULL DEFAULT 0,
     succeeded INTEGER NOT NULL DEFAULT 0,
     skipped INTEGER NOT NULL DEFAULT 0,
@@ -320,8 +320,8 @@ SESSION_COLUMNS = {
     "proxy_last_test_at": "TEXT",
     "batch_success_count": "INTEGER NOT NULL DEFAULT 0",
     "batch_cooldown_until": "TEXT",
-    "invite_batch_limit": "INTEGER NOT NULL DEFAULT 3",
-    "invite_cooldown_minutes": "INTEGER NOT NULL DEFAULT 20",
+    "invite_batch_limit": "INTEGER NOT NULL DEFAULT 0",
+    "invite_cooldown_minutes": "INTEGER NOT NULL DEFAULT 0",
 }
 
 
@@ -401,6 +401,47 @@ def initialize_database() -> None:
                 ("heartbeat_message_template", "Merhabaa", now),
             ],
         )
+        unrestricted_migration = connection.execute(
+            "SELECT value FROM app_settings WHERE key='invite_unrestricted_defaults_v1'"
+        ).fetchone()
+        if unrestricted_migration is None:
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET invite_batch_limit=0, invite_cooldown_minutes=0,
+                    batch_success_count=0, batch_cooldown_until=NULL,
+                    status=CASE WHEN status='batch_wait' THEN 'active' ELSE status END,
+                    updated_at=?
+                WHERE invite_batch_limit=3 AND invite_cooldown_minutes=20
+                """,
+                (now,),
+            )
+            connection.execute(
+                """
+                UPDATE transfer_jobs
+                SET min_delay_seconds=0, max_delay_seconds=0, daily_limit=0,
+                    updated_at=?
+                WHERE min_delay_seconds=20 AND max_delay_seconds=40 AND daily_limit=50
+                  AND status NOT IN ('completed', 'failed')
+                """,
+                (now,),
+            )
+            connection.execute(
+                """
+                UPDATE telegram_sessions
+                SET status='active', flood_wait_until=NULL, last_error=NULL, updated_at=?
+                WHERE status='flood_wait'
+                  AND (last_error LIKE '%24 saat%' OR LOWER(COALESCE(last_error, '')) LIKE '%spam%')
+                """,
+                (now,),
+            )
+            connection.execute(
+                """
+                INSERT INTO app_settings(key, value, updated_at)
+                VALUES ('invite_unrestricted_defaults_v1', 'true', ?)
+                """,
+                (now,),
+            )
 
 
 @contextmanager

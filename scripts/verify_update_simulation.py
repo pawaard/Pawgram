@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import gc
 import hashlib
+import json
 import os
 import shutil
 import socket
@@ -19,6 +20,7 @@ import zipfile
 from pathlib import Path
 
 from cryptography.fernet import Fernet
+from dotenv import dotenv_values
 
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 if str(SOURCE_DIR) not in sys.path:
@@ -187,6 +189,86 @@ def customer_snapshot(install: Path) -> dict:
     }
 
 
+def customer_data_preserved(before: dict, after: dict, *, managed_proxy: bool) -> bool:
+    preserved_keys = {
+        "env",
+        "secret_key",
+        "session_file",
+        "preferences_file",
+        "settings",
+        "job",
+    }
+    if any(before[key] != after[key] for key in preserved_keys):
+        return False
+    if not managed_proxy:
+        return before["session"] == after["session"]
+    before_session = before["session"]
+    after_session = after["session"]
+    if before_session is None or after_session is None:
+        return before_session == after_session
+    return (
+        before_session[:5] == after_session[:5]
+        and before_session[12:] == after_session[12:]
+    )
+
+
+def managed_proxy_configuration(package: Path) -> dict | None:
+    bundle_path = package / "_internal" / "customer-proxy.json"
+    if bundle_path.is_file():
+        return json.loads(bundle_path.read_text(encoding="utf-8"))
+    env_path = package / ".env"
+    if not env_path.is_file():
+        return None
+    environment = dotenv_values(env_path)
+    revision = environment.get("DEFAULT_PROXY_REVISION")
+    host = environment.get("DEFAULT_PROXY_HOST")
+    port = environment.get("DEFAULT_PROXY_PORT")
+    if (
+        str(environment.get("CUSTOMER_RELEASE", "")).lower() != "true"
+        or not revision
+        or not host
+        or not port
+    ):
+        return None
+    return {
+        "revision": revision,
+        "proxy_type": environment.get("DEFAULT_PROXY_TYPE") or "socks5",
+        "host": host,
+        "port": int(port),
+        "username": environment.get("DEFAULT_PROXY_USERNAME"),
+        "password": environment.get("DEFAULT_PROXY_PASSWORD"),
+    }
+
+
+def managed_proxy_applied(install: Path, proxy: dict | None) -> bool:
+    if proxy is None:
+        return True
+    with sqlite3.connect(install / "data" / "console.db") as connection:
+        session = connection.execute(
+            """
+            SELECT status, proxy_enabled, proxy_type, proxy_host, proxy_port,
+                   proxy_username_encrypted IS NOT NULL,
+                   proxy_password_encrypted IS NOT NULL
+            FROM telegram_sessions
+            WHERE label='Existing Session'
+            """
+        ).fetchone()
+        revision = connection.execute(
+            "SELECT value FROM app_settings WHERE key='default_login_proxy_revision'"
+        ).fetchone()
+    if session is None or revision is None:
+        return False
+    return session == (
+        "proxy_pending",
+        1,
+        proxy["proxy_type"],
+        proxy["host"],
+        int(proxy["port"]),
+        int(bool(proxy.get("username"))),
+        int(bool(proxy.get("password"))),
+    ) and revision[0] == proxy["revision"]
+
+
 def powershell_path() -> Path:
     system_root = Path(os.environ.get("SystemRoot", r"C:\Windows")).resolve()
     executable = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
@@ -308,6 +390,8 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path, port: int
     install = root / "install-success"
     customer_root = extract_release(customer_zip, root / "customer-success")
     staged = extract_release(update_zip, root / "update-success" / "extracted")
+    proxy = managed_proxy_configuration(staged)
+    managed_proxy = proxy is not None
     expected_version = (staged / "_internal" / "VERSION").read_text(encoding="utf-8").strip()
     install.mkdir(parents=True)
     shutil.copy2(customer_root / ".env", install / ".env")
@@ -330,7 +414,12 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path, port: int
             encoding="utf-8-sig", errors="replace"
         )
         evidence = {
-            "snapshot_preserved": before == after,
+            "snapshot_preserved": customer_data_preserved(
+                before,
+                after,
+                managed_proxy=managed_proxy,
+            ),
+            "managed_proxy_applied": managed_proxy_applied(install, proxy),
             "installed_version": (install / "_internal" / "VERSION")
             .read_text(encoding="utf-8")
             .strip(),
@@ -343,6 +432,7 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path, port: int
         }
         if evidence != {
             "snapshot_preserved": True,
+            "managed_proxy_applied": True,
             "installed_version": expected_version,
             "health_marker": True,
             "live_health": True,
@@ -359,6 +449,8 @@ def simulate_success(customer_zip: Path, update_zip: Path, root: Path, port: int
 
 def simulate_rollback(customer_zip: Path, root: Path, port: int) -> dict:
     customer_root = extract_release(customer_zip, root / "customer-rollback")
+    proxy = managed_proxy_configuration(customer_root)
+    managed_proxy = proxy is not None
     install = root / "install-rollback"
     shutil.copytree(customer_root, install)
     configure_port(install, port)
@@ -386,7 +478,12 @@ def simulate_rollback(customer_zip: Path, root: Path, port: int) -> dict:
             encoding="utf-8-sig", errors="replace"
         )
         evidence = {
-            "snapshot_preserved": before == after,
+            "snapshot_preserved": customer_data_preserved(
+                before,
+                after,
+                managed_proxy=managed_proxy,
+            ),
+            "managed_proxy_applied": managed_proxy_applied(install, proxy),
             "executable_restored": sha256(install / "Pawgram.exe") == executable_before,
             "restored_version": (install / "_internal" / "VERSION")
             .read_text(encoding="utf-8")
@@ -397,6 +494,7 @@ def simulate_rollback(customer_zip: Path, root: Path, port: int) -> dict:
         }
         if evidence != {
             "snapshot_preserved": True,
+            "managed_proxy_applied": True,
             "executable_restored": True,
             "restored_version": customer_version,
             "rollback_logged": True,

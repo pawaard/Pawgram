@@ -12,14 +12,20 @@ if (& git -C $projectRoot status --porcelain --untracked-files=no) {
 if (-not $PythonPath) {
     $runtimeRoot = Join-Path ([Environment]::GetFolderPath("UserProfile")) ".cache\codex-runtimes"
     $PythonPath = Get-ChildItem -LiteralPath $runtimeRoot -Filter python.exe -Recurse -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -like "*dependencies\python\python.exe" } |
+        Where-Object {
+            $_.FullName -like "*dependencies\python\python.exe" -and
+            $_.FullName -notlike "*.previous-*"
+        } |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1 -ExpandProperty FullName
 }
 if (-not $SigningKeyPath) {
     $SigningKeyPath = Join-Path $projectRoot "license_server\data\signing_key.pem"
 }
-if (-not (Test-Path -LiteralPath $PythonPath)) { throw "Uyumlu Python bulunamadı." }
+if (-not $PythonPath -or -not (Test-Path -LiteralPath $PythonPath -PathType Leaf)) {
+    throw "Uyumlu Python bulunamadı."
+}
+$PythonPath = [IO.Path]::GetFullPath($PythonPath)
 if (-not (Test-Path -LiteralPath $SigningKeyPath)) { throw "Güncelleme imzalama anahtarı bulunamadı." }
 if ($DatabasePath) {
     $DatabasePath = [IO.Path]::GetFullPath($DatabasePath)
@@ -46,12 +52,6 @@ try {
     & git -C $projectRoot archive --format=zip --output=$sourceArchive HEAD
     if ($LASTEXITCODE -ne 0) { throw "Kaynak arşivi oluşturulamadı." }
     Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceRoot
-    if ($DatabasePath) {
-        & $PythonPath (Join-Path $sourceRoot "scripts\export_proxy_bundle.py") `
-            --database $DatabasePath `
-            --output (Join-Path $sourceRoot "customer-proxy.json")
-        if ($LASTEXITCODE -ne 0) { throw "Müşteri proxy güncelleme paketi üretilemedi." }
-    }
     & $PythonPath -m pip install --disable-pip-version-check --target $buildPackages `
         -r (Join-Path $sourceRoot "requirements.txt") `
         -r (Join-Path $sourceRoot "requirements-build.txt")
@@ -59,6 +59,12 @@ try {
     $previousPythonPath = $env:PYTHONPATH
     $env:PYTHONPATH = "$buildPackages;$sourceRoot"
     try {
+        if ($DatabasePath) {
+            & $PythonPath (Join-Path $sourceRoot "scripts\export_proxy_bundle.py") `
+                --database $DatabasePath `
+                --output (Join-Path $sourceRoot "customer-proxy.json")
+            if ($LASTEXITCODE -ne 0) { throw "Müşteri proxy güncelleme paketi üretilemedi." }
+        }
         Push-Location -LiteralPath $sourceRoot
         try {
             & $PythonPath -m PyInstaller --noconfirm (Join-Path $sourceRoot "Pawgram.spec") `

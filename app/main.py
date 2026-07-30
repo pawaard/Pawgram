@@ -501,7 +501,7 @@ def public_session(row: dict) -> dict:
     elif status == "proxy_pending" or not proxy_status:
         health_score, health_label = 50, "Proxy testi bekliyor"
     elif status == "flood_wait":
-        health_score, health_label = 55, "24 saat dinleniyor"
+        health_score, health_label = 55, "Telegram beklemesi"
     elif status == "batch_wait":
         health_score, health_label = 85, "Parti beklemesi"
     else:
@@ -521,8 +521,8 @@ def public_session(row: dict) -> dict:
         "batch_cooldown_seconds": batch_wait_seconds,
         "batch_cooldown_until": row.get("batch_cooldown_until"),
         "batch_success_count": int(row.get("batch_success_count") or 0),
-        "invite_batch_limit": int(row.get("invite_batch_limit") or 3),
-        "invite_cooldown_minutes": int(row.get("invite_cooldown_minutes") or 20),
+        "invite_batch_limit": int(row.get("invite_batch_limit") or 0),
+        "invite_cooldown_minutes": int(row.get("invite_cooldown_minutes") or 0),
         "last_error": row["last_error"],
         "proxy_enabled": bool(row.get("proxy_enabled")),
         "proxy_type": row.get("proxy_type"),
@@ -690,6 +690,7 @@ def settings_overview_data() -> dict:
                     "paused_quota",
                     "proxy_error",
                     "flood_wait",
+                    "telegram_restricted",
                     "failed",
                 )
             ),
@@ -1041,7 +1042,7 @@ async def dashboard():
         job_attention = connection.execute(
             """
             SELECT COUNT(*) count FROM transfer_jobs
-            WHERE status IN ('paused_batch', 'paused_quota', 'proxy_error', 'flood_wait', 'failed')
+            WHERE status IN ('paused_batch', 'paused_quota', 'proxy_error', 'flood_wait', 'telegram_restricted', 'failed')
             """
         ).fetchone()["count"]
         active_operations = connection.execute(
@@ -1665,13 +1666,13 @@ async def session_invite_policy(session_id: int):
     session = get_session_or_404(session_id)
     return {
         "session_id": session_id,
-        "batch_limit": int(session.get("invite_batch_limit") or 3),
-        "cooldown_minutes": int(session.get("invite_cooldown_minutes") or 20),
+        "batch_limit": int(session.get("invite_batch_limit") or 0),
+        "cooldown_minutes": int(session.get("invite_cooldown_minutes") or 0),
         "batch_success_count": int(session.get("batch_success_count") or 0),
         "automatic_handoff": True,
         "reuse_candidates": True,
-        "switch_on_error": False,
-        "switch_on_flood_wait": False,
+        "switch_on_error": True,
+        "switch_on_flood_wait": True,
     }
 
 
@@ -1698,7 +1699,11 @@ async def save_session_invite_policy(
     add_log(
         "success",
         "settings",
-        f"Session otomatik devir ayarı güncellendi: {payload.batch_limit} ekleme / {payload.cooldown_minutes} dakika dinlenme",
+        (
+            "Session için Pawgram parti sınırı kapatıldı"
+            if payload.batch_limit == 0
+            else f"Session otomatik devir ayarı güncellendi: {payload.batch_limit} ekleme / {payload.cooldown_minutes} dakika dinlenme"
+        ),
         session_id,
     )
     return {
@@ -2331,6 +2336,7 @@ async def execute_job(job_id: int):
         "paused_batch",
         "proxy_error",
         "flood_wait",
+        "telegram_restricted",
     }
     if job["status"] not in resumable_statuses:
         raise HTTPException(
@@ -2365,7 +2371,7 @@ async def execute_job(job_id: int):
                 """
                 UPDATE transfer_jobs
                 SET status='scheduled', resume_at=?, last_error=?, updated_at=?
-                WHERE id=? AND status IN ('approved', 'scheduled', 'paused_quota', 'paused_batch', 'flood_wait')
+                WHERE id=? AND status IN ('approved', 'scheduled', 'paused_quota', 'paused_batch', 'flood_wait', 'telegram_restricted')
                 """,
                 (next_run.isoformat(), message, utc_now(), job_id),
             )
@@ -2387,7 +2393,7 @@ async def execute_job(job_id: int):
             UPDATE transfer_jobs
             SET status='queued_execution', execution_started_at=COALESCE(execution_started_at, ?),
                 resume_at=NULL, last_error=NULL, updated_at=?
-            WHERE id=? AND status IN ('approved', 'scheduled', 'paused_quota', 'paused_batch', 'proxy_error', 'flood_wait')
+            WHERE id=? AND status IN ('approved', 'scheduled', 'paused_quota', 'paused_batch', 'proxy_error', 'flood_wait', 'telegram_restricted')
             """,
             (now, now, job_id),
         )

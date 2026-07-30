@@ -77,7 +77,7 @@ function escapeHtml(value = "") {
 }
 
 function badge(status) {
-  const labels = { active:"Aktif", flood_wait:"24 saat dinleniyor", batch_wait:"Parti beklemesi", paused_batch:"Parti beklemesi", paused_quota:"Günlük kota bekliyor", proxy_pending:"Proxy test edilecek", proxy_error:"Proxy hatası", awaiting_code:"Kod bekliyor", invalid:"Geçersiz", banned:"Kullanılamıyor", ready:"Hazır", attention:"Uyarı", busy:"Meşgul", already_member:"Zaten grupta", preview:"Önizleme", previewed:"Önizlendi", approved:"Onaylandı", queued_execution:"Başlatılıyor", running:"Çalışıyor", checking:"Kontrol ediliyor", joined:"Katıldı", approval_pending:"Onay bekliyor", stopped:"Durduruldu", completed:"Tamamlandı", failed:"Hatalı", group:"Grup", megagroup:"Megagroup", channel:"Kanal", success:"Uygun", warning:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı", queued:"Sırada", scheduled:"Planlandı", waiting:"FloodWait", waiting_join:"Katılım onayı", waiting_budget:"Güvenli bütçe", paused:"Duraklatıldı", error:"Hatalı" };
+  const labels = { active:"Aktif", flood_wait:"Telegram beklemesi", telegram_restricted:"Telegram hesap kısıtı", batch_wait:"Parti beklemesi", paused_batch:"Parti beklemesi", paused_quota:"Günlük kota bekliyor", proxy_pending:"Proxy test edilecek", proxy_error:"Proxy hatası", awaiting_code:"Kod bekliyor", invalid:"Geçersiz", banned:"Kullanılamıyor", ready:"Hazır", attention:"Uyarı", busy:"Meşgul", already_member:"Zaten grupta", preview:"Önizleme", previewed:"Önizlendi", approved:"Onaylandı", queued_execution:"Başlatılıyor", running:"Çalışıyor", checking:"Kontrol ediliyor", joined:"Katıldı", approval_pending:"Onay bekliyor", stopped:"Durduruldu", completed:"Tamamlandı", failed:"Hatalı", group:"Grup", megagroup:"Megagroup", channel:"Kanal", success:"Uygun", warning:"Zaten grupta", bot:"Bot", deleted:"Silinmiş", admin:"Grup yöneticisi", previously_used:"Daha önce alındı", queued:"Sırada", scheduled:"Planlandı", waiting:"FloodWait", waiting_join:"Katılım onayı", waiting_budget:"Pawgram kotası", paused:"Duraklatıldı", error:"Hatalı" };
   return `<span class="badge ${escapeHtml(status)}">${labels[status] || escapeHtml(status)}</span>`;
 }
 
@@ -280,7 +280,7 @@ function sessionStatusInfo(session) {
   }
   const statuses = {
     active:{group:"ready", badge:"active", title:"Kullanıma hazır", description:"Proxy ve session yeni bir işlem için hazır."},
-    batch_wait:{group:"waiting", badge:"batch_wait", title:"Parti beklemesi", description:`Parti limiti sonrası ${session.invite_cooldown_minutes || 20} dakikalık dinlenme uygulanıyor.`},
+    batch_wait:{group:"waiting", badge:"batch_wait", title:"Parti beklemesi", description:`Parti limiti sonrası ${Number(session.invite_cooldown_minutes || 0)} dakikalık dinlenme uygulanıyor.`},
     flood_wait:{group:"waiting", badge:"flood_wait", title:"FloodWait", description:"Telegram tarafından verilen zorunlu bekleme süresi devam ediyor."},
     proxy_pending:{group:"problem", badge:"proxy_pending", title:"Proxy testi bekliyor", description:"İşleme başlamadan önce proxy bağlantısı doğrulanmalı."},
     proxy_error:{group:"problem", badge:"proxy_error", title:"Proxy hatası", description:"Ana IP kullanılmadan session güvenli biçimde durduruldu."},
@@ -341,15 +341,16 @@ function renderSessionTable() {
       ${sessions.map(session => {
         const status = sessionStatusInfo(session);
         const recent = sessionRecentActivity(session);
-        const batchLimit = Math.max(1, Number(session.invite_batch_limit || 3));
+        const batchLimit = Math.max(0, Number(session.invite_batch_limit ?? 0));
         const batchUsed = Math.max(0, Number(session.batch_success_count || 0));
-        const batchPercent = Math.min(100, Math.round((batchUsed / batchLimit) * 100));
+        const batchPercent = batchLimit > 0 ? Math.min(100, Math.round((batchUsed / batchLimit) * 100)) : 0;
+        const batchLabel = batchLimit > 0 ? `${batchUsed} / ${batchLimit}` : "Sınırsız";
         const waitSeconds = Number(session.flood_wait_seconds || session.batch_cooldown_seconds || 0);
         return `<tr>
           <td><strong>${escapeHtml(session.label)}</strong><div class="mono">#${session.id} · ${escapeHtml(session.phone_masked)}</div></td>
           <td>${escapeHtml(session.display_name || "—")}${session.username ? `<br><span class="mono">@${escapeHtml(session.username)}</span>` : ""}</td>
           <td>${badge(status.badge)}<small class="session-status-note">${escapeHtml(status.title)} · ${escapeHtml(status.description)}</small></td>
-          <td><div class="session-usage"><strong>Bugün ${Number(session.today_invite_count || 0)} kişi</strong><small>Parti ${batchUsed} / ${batchLimit}</small><div><i style="width:${batchPercent}%"></i></div></div></td>
+          <td><div class="session-usage"><strong>Bugün ${Number(session.today_invite_count || 0)} kişi</strong><small>Parti ${batchLabel}</small><div><i style="width:${batchPercent}%"></i></div></div></td>
           <td>${session.proxy_enabled ? `<span class="badge ${session.proxy_last_status === "success" ? "active" : session.proxy_last_status === "failed" ? "error" : "warning"}">${escapeHtml((session.proxy_type || "proxy").toUpperCase())}</span><small class="mono session-table-note">${escapeHtml(session.proxy_host || "—")}:${session.proxy_port || "—"}${session.proxy_latency_ms ? ` · ${session.proxy_latency_ms} ms` : ""}</small>` : `<span class="badge error">Proxy yok</span>`}<div class="health session-row-health" title="${escapeHtml(session.health_label || "")}"><div class="health-bar"><i style="width:${Number(session.health_score || 0)}%"></i></div><small>${escapeHtml(session.health_label || `${session.health_score}/100`)}</small></div></td>
           <td>${session.operation_type ? `<strong>${escapeHtml(session.operation_label || session.operation_type)}</strong><small class="session-table-note">${escapeHtml(formatDateTime(session.operation_acquired_at))}</small>` : recent ? `<strong>${escapeHtml(recent.label)}</strong><small class="session-table-note">${escapeHtml(formatDateTime(recent.date))}</small>` : `<span class="session-table-note">Henüz işlem yok</span>`}</td>
           <td class="mono">${waitSeconds ? `<span class="countdown" data-seconds="${waitSeconds}">${formatDuration(waitSeconds)}</span><small class="session-table-note">${escapeHtml(formatDateTime(session.flood_wait_until || session.batch_cooldown_until))}</small>` : "—"}</td>
@@ -363,15 +364,18 @@ function openSessionDetail(sessionId) {
   const session = state.sessions.find(item => Number(item.id) === Number(sessionId));
   if (!session) return toast("Session bulunamadı.");
   const status = sessionStatusInfo(session);
-  const batchLimit = Math.max(1, Number(session.invite_batch_limit || 3));
+  const batchLimit = Math.max(0, Number(session.invite_batch_limit ?? 0));
   const batchUsed = Math.max(0, Number(session.batch_success_count || 0));
+  const batchDescription = batchLimit > 0
+    ? `${batchUsed} / ${batchLimit} · Sonra ${Number(session.invite_cooldown_minutes || 0)} dk dinlenir`
+    : "Pawgram parti sınırı kapalı";
   const errorText = session.last_error || session.proxy_last_error || "Kayıtlı hata yok.";
   $("#session-detail-content").innerHTML = `
     <div class="session-detail-heading"><div><h2>${escapeHtml(session.label)}</h2><p>${escapeHtml(session.display_name || "Telegram hesabı")} · <span class="mono">${escapeHtml(session.phone_masked)}</span></p></div>${badge(status.badge)}</div>
     <div class="session-detail-status"><strong>${escapeHtml(status.title)}</strong><span>${escapeHtml(status.description)}</span></div>
     <div class="session-detail-grid">
       <article><small>BUGÜNKÜ EKLEME</small><strong>${Number(session.today_invite_count || 0)}</strong><span>Başarılı doğrudan ekleme</span></article>
-      <article><small>PARTİ KULLANIMI</small><strong>${batchUsed} / ${batchLimit}</strong><span>Sonra ${Number(session.invite_cooldown_minutes || 20)} dk dinlenir</span></article>
+      <article><small>PARTİ KULLANIMI</small><strong>${batchLimit > 0 ? `${batchUsed} / ${batchLimit}` : "Sınırsız"}</strong><span>${batchDescription}</span></article>
       <article><small>BUGÜNKÜ TARAMA KULLANIMI</small><strong>${Number(session.today_activity_count || 0)}</strong><span>Aktiflik tarama operasyonu</span></article>
       <article><small>SESSION SAĞLIĞI</small><strong>${Number(session.health_score || 0)} / 100</strong><span>${escapeHtml(session.health_label || "—")}</span></article>
     </div>
@@ -1861,10 +1865,12 @@ async function loadInvitePolicy() {
   }
   try {
     const policy = await api(`/api/sessions/${sessionId}/invite-policy`);
-    $("#invite-batch-limit").value = policy.batch_limit || 3;
-    $("#invite-cooldown-minutes").value = policy.cooldown_minutes || 20;
+    $("#invite-batch-limit").value = policy.batch_limit ?? 0;
+    $("#invite-cooldown-minutes").value = policy.cooldown_minutes ?? 0;
     setInvitePolicyStatus(
-      `${policy.batch_success_count}/${policy.batch_limit} başarılı ekleme · Limit dolunca sıradaki sağlıklı session'a otomatik geçilecek · Mevcut tarama tekrar edilmeyecek.`,
+      policy.batch_limit > 0
+        ? `${policy.batch_success_count}/${policy.batch_limit} başarılı ekleme · Limit dolunca sıradaki sağlıklı session'a otomatik geçilecek · Mevcut tarama tekrar edilmeyecek.`
+        : "Pawgram parti ve cooldown sınırı kapalı. Telegram yanıt verirse yalnızca bildirdiği bekleme uygulanır.",
       "success",
     );
     markSettingsFieldsSaved(SETTINGS_FIELD_GROUPS.invitePolicy);
@@ -1876,8 +1882,8 @@ async function saveInvitePolicy() {
   if (!sessionId) return setInvitePolicyStatus("Bir Telegram session seçin.", "error");
   const batchLimit = Number($("#invite-batch-limit").value);
   const cooldownMinutes = Number($("#invite-cooldown-minutes").value);
-  if (batchLimit < 1 || batchLimit > 20) return setInvitePolicyStatus("X limiti 1-20 arasında olmalı.", "error");
-  if (cooldownMinutes < 5 || cooldownMinutes > 240) return setInvitePolicyStatus("Dinlenme süresi 5-240 dakika arasında olmalı.", "error");
+  if (!Number.isInteger(batchLimit) || batchLimit < 0) return setInvitePolicyStatus("Ekleme limiti 0 veya pozitif tam sayı olmalı.", "error");
+  if (!Number.isInteger(cooldownMinutes) || cooldownMinutes < 0) return setInvitePolicyStatus("Dinlenme süresi 0 veya pozitif tam sayı olmalı.", "error");
   const button = $("#save-invite-policy");
   button.disabled = true;
   try {
@@ -1886,7 +1892,12 @@ async function saveInvitePolicy() {
       body:JSON.stringify({batch_limit:batchLimit, cooldown_minutes:cooldownMinutes}),
     });
     await Promise.all([loadInvitePolicy(), loadSessions()]);
-    setInvitePolicyStatus(`Session #${sessionId}: ${batchLimit} başarılı eklemeden sonra otomatik devir, ${cooldownMinutes} dakika dinlenme kaydedildi.`, "success");
+    setInvitePolicyStatus(
+      batchLimit === 0
+        ? `Session #${sessionId}: Pawgram parti ve cooldown sınırı kapatıldı.`
+        : `Session #${sessionId}: ${batchLimit} başarılı eklemeden sonra otomatik devir, ${cooldownMinutes} dakika dinlenme kaydedildi.`,
+      "success",
+    );
   } catch (error) { setInvitePolicyStatus(error.message, "error"); }
   finally { button.disabled = false; }
 }
@@ -2057,7 +2068,7 @@ async function openCandidateResults(jobId, previewSummary = null) {
   $("#candidate-job-name").textContent = job ? `${job.name} · JOB-${String(job.id).padStart(4,"0")}` : `JOB-${jobId}`;
   $("#candidate-csv").href = `/api/jobs/${jobId}/report.csv`;
   const counts = data.counts || {};
-  const approved = ["approved", "scheduled", "queued_execution", "running", "paused_quota", "paused_batch", "proxy_error", "flood_wait", "completed", "failed"].includes(job?.status);
+  const approved = ["approved", "scheduled", "queued_execution", "running", "paused_quota", "paused_batch", "proxy_error", "flood_wait", "telegram_restricted", "completed", "failed"].includes(job?.status);
   const summaryItems = [
     ["Taranan", data.items.length, "blue"], ["Uygun", counts.eligible || 0, "green"],
     ["Seçili", data.selected_count || 0, "blue"], ["Gruba eklendi", counts.invited || 0, "green"],
@@ -2072,9 +2083,9 @@ async function openCandidateResults(jobId, previewSummary = null) {
   $("#approve-job").disabled = !counts.eligible || approved;
   $("#approve-job").textContent = approved ? "Seçim onaylandı" : "Seçimi onayla";
   $("#select-all-eligible").classList.toggle("hidden", approved);
-  const resumable = ["approved", "paused_quota", "paused_batch", "proxy_error", "flood_wait"].includes(job?.status);
+  const resumable = ["approved", "paused_quota", "paused_batch", "proxy_error", "flood_wait", "telegram_restricted"].includes(job?.status);
   $("#execute-job").classList.toggle("hidden", !resumable);
-  $("#execute-job").textContent = job?.status === "proxy_error" ? "Proxy düzeltildi, tekrar dene" : job?.status === "approved" ? "Üyeleri hedef gruba ekle" : "İşe devam et";
+  $("#execute-job").textContent = job?.status === "proxy_error" ? "Proxy düzeltildi, tekrar dene" : job?.status === "telegram_restricted" ? "Telegram durumunu tekrar dene" : job?.status === "approved" ? "Üyeleri hedef gruba ekle" : "İşe devam et";
   openModal("#candidate-modal");
   if (job?.last_error && resumable) showMessage("#candidate-message", job.last_error);
 }
